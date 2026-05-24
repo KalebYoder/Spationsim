@@ -1,21 +1,81 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNation } from '../hooks/useNation'
-import { PageHeader, Card, SectionLabel, EmptyState, Badge, Btn } from '../components/ui'
+import { Card, SectionLabel, EmptyState, Badge, Btn } from '../components/ui'
 
-function TerritoryCard({ territory, flagColor }) {
+function RenameInput({ current, onSave, onCancel }) {
+  const [value, setValue] = useState(current)
+  const inputRef = useRef(null)
+
+  useEffect(() => { inputRef.current?.focus() }, [])
+
+  const submit = () => {
+    const trimmed = value.trim()
+    if (trimmed && trimmed !== current) onSave(trimmed)
+    else onCancel()
+  }
+
+  const onKey = e => {
+    if (e.key === 'Enter') submit()
+    if (e.key === 'Escape') onCancel()
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onKeyDown={onKey}
+        maxLength={128}
+        style={{ fontSize: 15, fontWeight: 500, padding: '2px 8px', width: 220 }}
+      />
+      <Btn variant="amber" onClick={submit} style={{ padding: '2px 10px', fontSize: 12 }}>Save</Btn>
+      <Btn onClick={onCancel} style={{ padding: '2px 10px', fontSize: 12 }}>Cancel</Btn>
+    </div>
+  )
+}
+
+function TerritoryCard({ territory, flagColor, onRenamed }) {
   const [open, setOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const displayName = territory.name || territory.node_key
+
+  const handleSave = async newName => {
+    setSaving(true)
+    setError('')
+    try {
+      const r = await fetch(`/api/territories/${territory.id}/name`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName }),
+      })
+      if (!r.ok) {
+        const err = await r.json()
+        setError(err.detail || 'Failed to rename')
+        return
+      }
+      const updated = await r.json()
+      onRenamed(updated)
+    } catch {
+      setError('Network error')
+    } finally {
+      setSaving(false)
+      setRenaming(false)
+    }
+  }
 
   return (
     <Card style={{ padding: 0, overflow: 'hidden' }}>
-      {/* Header */}
       <div
-        onClick={() => setOpen(o => !o)}
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '14px 20px',
-          cursor: 'pointer',
           background: open ? 'var(--bg-hover)' : 'transparent',
           borderBottom: open ? '1px solid var(--border)' : 'none',
           transition: 'background 0.15s',
@@ -24,20 +84,54 @@ function TerritoryCard({ territory, flagColor }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{
             display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-            background: flagColor || 'var(--teal)',
+            background: flagColor || 'var(--teal)', flexShrink: 0,
           }} />
-          <span style={{ fontWeight: 500 }}>{territory.node_key}</span>
-          <Badge color="teal">Home</Badge>
+          {renaming ? (
+            <RenameInput
+              current={territory.name || ''}
+              onSave={handleSave}
+              onCancel={() => setRenaming(false)}
+            />
+          ) : (
+            <>
+              <span
+                style={{ fontWeight: 500, cursor: 'pointer' }}
+                onClick={() => setOpen(o => !o)}
+              >
+                {displayName}
+              </span>
+              {territory.name && (
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{territory.node_key}</span>
+              )}
+              {!saving && (
+                <button
+                  onClick={() => setRenaming(true)}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--text-muted)', fontSize: 12, padding: '0 4px',
+                  }}
+                  title="Rename"
+                >
+                  ✎
+                </button>
+              )}
+            </>
+          )}
+          {territory.is_home && <Badge color="teal">Home</Badge>}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 13, color: 'var(--text-secondary)' }}>
+        <div
+          onClick={() => setOpen(o => !o)}
+          style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 13, color: 'var(--text-secondary)', cursor: 'pointer' }}
+        >
           <span>Distance {territory.distance_from_center}</span>
-          <span>Min {territory.mineral_richness?.toFixed(2)}</span>
-          <span>Fuel {territory.fuel_richness?.toFixed(2)}</span>
+          <span>Min {parseFloat(territory.mineral_richness).toFixed(2)}</span>
+          <span>Fuel {parseFloat(territory.fuel_richness).toFixed(2)}</span>
           <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{open ? '▲' : '▼'}</span>
         </div>
       </div>
 
-      {/* Expanded detail */}
+      {error && <p style={{ color: 'red', padding: '4px 20px', fontSize: 13 }}>{error}</p>}
+
       {open && (
         <div style={{ padding: '16px 20px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
           <div>
@@ -65,21 +159,29 @@ function TerritoryCard({ territory, flagColor }) {
 }
 
 export default function Planets() {
-  const { nation, loading } = useNation()
-  const [homeTerritory, setHomeTerritory] = useState(null)
-  const [fetched, setFetched] = useState(false)
+  const { nation, loading: nationLoading } = useNation()
+  const [territories, setTerritories] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  if (!fetched && nation?.home_territory_id) {
-    setFetched(true)
-    fetch(`/api/territories/available`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(() => {
-        // Placeholder: full territory endpoint coming in Phase 2
-        setHomeTerritory({ node_key: '(home)', distance_from_center: '?', mineral_richness: null, fuel_richness: null })
-      })
+  useEffect(() => {
+    if (!nation) return
+    fetch('/api/nations/mine/territories', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => { setTerritories(data); setLoading(false) })
+      .catch(() => { setError('Failed to load territories'); setLoading(false) })
+  }, [nation?.id])
+
+  const handleRenamed = updated => {
+    setTerritories(ts => ts.map(t => t.id === updated.id ? { ...t, name: updated.name } : t))
   }
 
-  if (loading) return <p style={{ color: 'var(--text-muted)' }}>Loading&hellip;</p>
+  if (nationLoading || loading) return <p style={{ color: 'var(--text-muted)' }}>Loading&hellip;</p>
+
+  const territoriesWithHome = territories.map(t => ({
+    ...t,
+    is_home: t.id === nation?.home_territory_id,
+  }))
 
   return (
     <div>
@@ -95,24 +197,25 @@ export default function Planets() {
 
       <SectionLabel>Your Territories</SectionLabel>
 
-      {nation ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {homeTerritory && (
-            <TerritoryCard territory={homeTerritory} flagColor={nation.flag_color} />
-          )}
-          {!homeTerritory && (
-            <Card>
-              <EmptyState
-                title="Territory data loading"
-                body="Full per-territory breakdown available once the territory endpoint is complete (Phase 2)."
-              />
-            </Card>
-          )}
-        </div>
-      ) : (
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+
+      {territories.length === 0 && !error ? (
         <Card>
           <EmptyState title="No territories" body="Create your nation to claim a home system." />
         </Card>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {territoriesWithHome
+            .sort((a, b) => b.is_home - a.is_home)
+            .map(t => (
+              <TerritoryCard
+                key={t.id}
+                territory={t}
+                flagColor={nation?.flag_color}
+                onRenamed={handleRenamed}
+              />
+            ))}
+        </div>
       )}
     </div>
   )

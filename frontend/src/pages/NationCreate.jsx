@@ -86,12 +86,13 @@ function StepIdentity({ data, onChange, onNext }) {
 
 // ── Step 2: Map Picker ────────────────────────────────────────────────────────
 
-function StepMapPicker({ selectedId, onSelect, onNext, onBack, territories, loading, fetchError }) {
+function StepMapPicker({ selectedId, onSelect, planetName, onPlanetName, onNext, onBack, territories, loading, fetchError }) {
   const [hovered, setHovered] = useState(null)
   const [error, setError] = useState('')
 
   const handleNext = () => {
     if (!selectedId) { setError('Select a home system first'); return }
+    if (!planetName.trim()) { setError('Name your home planet before continuing'); return }
     setError('')
     onNext()
   }
@@ -160,6 +161,20 @@ function StepMapPicker({ selectedId, onSelect, onNext, onBack, territories, load
         </p>
       )}
 
+      {selectedId && (
+        <div style={{ marginTop: 16 }}>
+          <label style={{ display: 'block', marginBottom: 6 }}>Home Planet Name</label>
+          <input
+            type="text"
+            value={planetName}
+            onChange={e => onPlanetName(e.target.value)}
+            maxLength={128}
+            placeholder="e.g. New Eden"
+            autoFocus
+          />
+        </div>
+      )}
+
       {error && <p style={{ color: 'red' }}>{error}</p>}
       <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
         <button onClick={onBack}>&larr; Back</button>
@@ -192,6 +207,7 @@ function StepConfirm({ data, territory, onSubmit, onBack, loading, error }) {
               {data.flag_color.toUpperCase()}
             </td>
           </tr>
+          <tr><td>Home Planet</td><td><strong>{data.home_planet_name}</strong></td></tr>
           <tr>
             <td>Home System</td>
             <td>
@@ -219,7 +235,7 @@ export default function NationCreate() {
   const navigate = useNavigate()
   const { refreshPlayer } = useAuth()
   const [step, setStep] = useState(1)
-  const [form, setForm] = useState({ name: '', currency_name: 'Credits', flag_color: '#3A86FF' })
+  const [form, setForm] = useState({ name: '', currency_name: 'Credits', flag_color: '#3A86FF', home_planet_name: '' })
   const [selectedTerritoryId, setSelectedTerritoryId] = useState(null)
   const [territories, setTerritories] = useState([])
   const [territoriesLoading, setTerritoriesLoading] = useState(false)
@@ -251,6 +267,7 @@ export default function NationCreate() {
           currency_name: form.currency_name.trim(),
           flag_color: form.flag_color.toUpperCase(),
           home_territory_id: selectedTerritoryId,
+          home_planet_name: form.home_planet_name.trim(),
         }),
       })
       if (!r.ok) {
@@ -285,6 +302,8 @@ export default function NationCreate() {
         <StepMapPicker
           selectedId={selectedTerritoryId}
           onSelect={setSelectedTerritoryId}
+          planetName={form.home_planet_name}
+          onPlanetName={v => onChange('home_planet_name', v)}
           onNext={() => setStep(3)}
           onBack={() => setStep(1)}
           territories={territories}

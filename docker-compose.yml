@@ -32,6 +32,21 @@ services:
       redis:
         condition: service_started
 
+  worker:
+    build: ./backend
+    command: sh /app/worker-start.sh
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://spationsim:${DB_PASSWORD}@db/spationsim
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
   frontend:
     build: ./frontend
     volumes:

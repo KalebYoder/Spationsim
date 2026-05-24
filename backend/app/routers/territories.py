@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.territory import Territory
 from ..models.nation import Nation
-from ..schemas.nation import TerritoryResponse, TerritoryMapResponse
+from ..models.player import Player
+from ..schemas.nation import TerritoryResponse, TerritoryMapResponse, TerritoryRenameRequest
+from ..routers.auth import get_current_player
 
 router = APIRouter(prefix="/api/territories", tags=["territories"])
 
@@ -38,3 +40,22 @@ def available_territories(db: Session = Depends(get_db)):
         .order_by(Territory.distance_from_center)
         .all()
     )
+
+
+@router.patch("/{territory_id}/name", response_model=TerritoryResponse)
+def rename_territory(
+    territory_id: int,
+    body: TerritoryRenameRequest,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    territory = db.get(Territory, territory_id)
+    if not territory:
+        raise HTTPException(status_code=404, detail="Territory not found")
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation or territory.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="You do not control this territory")
+    territory.name = body.name
+    db.commit()
+    db.refresh(territory)
+    return territory

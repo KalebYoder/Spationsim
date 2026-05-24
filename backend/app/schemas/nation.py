@@ -7,6 +7,7 @@ class NationCreateRequest(BaseModel):
     currency_name: str
     flag_color: str
     home_territory_id: int
+    home_planet_name: str
 
     @field_validator("name")
     @classmethod
@@ -14,6 +15,14 @@ class NationCreateRequest(BaseModel):
         v = v.strip()
         if len(v) < 3 or len(v) > 128:
             raise ValueError("Nation name must be 3–128 characters")
+        return v
+
+    @field_validator("home_planet_name")
+    @classmethod
+    def validate_home_planet_name(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 1 or len(v) > 128:
+            raise ValueError("Planet name must be 1–128 characters")
         return v
 
     @field_validator("currency_name")
@@ -40,18 +49,86 @@ class NationResponse(BaseModel):
     home_territory_id: int | None
     minerals: float
     fuel: float
+    starfighters: int
+    probes_reserve: int
 
     model_config = {"from_attributes": True}
+
+
+class ManufactureRequest(BaseModel):
+    quantity: int
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Quantity must be at least 1")
+        return v
+
+
+class UnitStatsResponse(BaseModel):
+    type: str
+    attack: int
+    defense: int
+    hp: int
+    nodes_per_tick: int
+    reserve: int
+    manufacture_cost_minerals: int
+    manufacture_cost_fuel: int
+
+
+class ProbeStatsResponse(BaseModel):
+    nodes_per_tick: int
+    reserve: int
+    manufacture_cost_minerals: int
+    manufacture_cost_fuel: int
 
 
 class TerritoryResponse(BaseModel):
     id: int
     node_key: str
+    name: str | None
     mineral_richness: float
     fuel_richness: float
     distance_from_center: int
 
     model_config = {"from_attributes": True}
+
+
+class InfrastructureBuildRequest(BaseModel):
+    territory_id: int
+    type: str
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        if v not in ("mine", "refinery", "fighter_factory", "probe_factory"):
+            raise ValueError("Type must be 'mine', 'refinery', 'fighter_factory', or 'probe_factory'")
+        return v
+
+
+class InfrastructureResponse(BaseModel):
+    id: int
+    territory_id: int
+    territory_node_key: str
+    territory_name: str | None
+    type: str
+    level: int
+    built_at: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class TerritoryRenameRequest(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 1 or len(v) > 128:
+            raise ValueError("Name must be 1–128 characters")
+        return v
 
 
 class TerritoryMapResponse(BaseModel):

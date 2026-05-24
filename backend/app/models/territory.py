@@ -9,6 +9,7 @@ class Territory(Base):
 
     id = Column(Integer, primary_key=True)
     node_key = Column(String(32), unique=True, nullable=False)
+    name = Column(String(128), nullable=True)
     nation_id = Column(Integer, ForeignKey("nations.id"), index=True)
     mineral_richness = Column(Numeric(4, 2), nullable=False)
     fuel_richness = Column(Numeric(4, 2), nullable=False)
@@ -16,7 +17,7 @@ class Territory(Base):
     is_colonized = Column(Boolean, default=False, nullable=False, index=True)
     colonized_at = Column(DateTime(timezone=True))
 
-    nation = relationship("Nation", back_populates="territories")
+    nation = relationship("Nation", back_populates="territories", foreign_keys=[nation_id])
     infrastructure = relationship("Infrastructure", back_populates="territory")
     population = relationship("TerritoryPopulation", back_populates="territory", uselist=False)
     probe_data = relationship("ProbeData", back_populates="territory")

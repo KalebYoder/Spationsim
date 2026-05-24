@@ -16,10 +16,12 @@ class Nation(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     minerals = Column(Numeric(12, 2), default=0, nullable=False)
     fuel = Column(Numeric(12, 2), default=0, nullable=False)
+    starfighters = Column(Integer, default=0, nullable=False)
+    probes_reserve = Column(Integer, default=0, nullable=False)
     diplomatic_status_default = Column(String(16), default="neutral", nullable=False)
 
     player = relationship("Player", back_populates="nation")
-    territories = relationship("Territory", back_populates="nation")
+    territories = relationship("Territory", back_populates="nation", foreign_keys="Territory.nation_id")
     probe_data_discovered = relationship("ProbeData", back_populates="discovered_by_nation",
                                          foreign_keys="ProbeData.discovered_by")
     probe_data_access = relationship("ProbeDataAccess", back_populates="granted_to_nation",

@@ -1,0 +1,41 @@
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Pull latest code
+        working-directory: /home/kaleb/spationsim
+        run: git pull origin master
+
+      - name: Build images
+        working-directory: /home/kaleb/spationsim
+        run: docker compose build backend worker frontend
+
+      - name: Swap services
+        working-directory: /home/kaleb/spationsim
+        run: |
+          docker compose up -d --no-deps worker
+          docker compose up -d --no-deps backend
+          docker compose up -d --no-deps frontend
+          docker compose up -d --no-deps nginx
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 10); do
+            if curl -sf http://localhost/api/health > /dev/null; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Waiting for backend... ($i/10)"
+            sleep 3
+          done
+          echo "Health check failed after 30s"
+          exit 1
+
+      - name: Prune old images
+        run: docker image prune -f

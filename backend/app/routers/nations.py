@@ -5,7 +5,7 @@ from ..db.database import get_db
 from ..models.nation import Nation
 from ..models.territory import Territory
 from ..models.player import Player
-from ..schemas.nation import NationCreateRequest, NationResponse
+from ..schemas.nation import NationCreateRequest, NationResponse, TerritoryResponse
 from ..routers.auth import get_current_player
 
 router = APIRouter(prefix="/api/nations", tags=["nations"])
@@ -34,6 +34,8 @@ def create_nation(
         currency_name=body.currency_name,
         flag_color=body.flag_color,
         home_territory_id=body.home_territory_id,
+        minerals=100,
+        fuel=100,
     )
     db.add(nation)
     db.flush()  # get nation.id before updating territory
@@ -41,6 +43,7 @@ def create_nation(
     territory.nation_id = nation.id
     territory.is_colonized = True
     territory.colonized_at = datetime.now(timezone.utc)
+    territory.name = body.home_planet_name
 
     db.commit()
     db.refresh(nation)
@@ -56,3 +59,14 @@ def get_my_nation(
     if not nation:
         raise HTTPException(status_code=404, detail="No nation found")
     return nation
+
+
+@router.get("/mine/territories", response_model=list[TerritoryResponse])
+def get_my_territories(
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+    return db.query(Territory).filter(Territory.nation_id == nation.id).all()
