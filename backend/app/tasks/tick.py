@@ -8,7 +8,7 @@ from ..models.territory import Territory
 from ..models.resource_log import ResourceLog
 from ..models.event import Event
 from ..models.territory_population import TerritoryPopulation
-from ..constants import POPULATION_GROWTH_PER_TICK
+from ..constants import POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER
 
 
 @celery_app.task(name="app.tasks.tick.run_tick")
@@ -39,16 +39,21 @@ def run_tick():
                 elif ftype == "refinery":
                     fuel_delta += round(2 * float(fuel_richness))
 
-            # Grow population in each territory
-            pops = (
-                db.query(TerritoryPopulation)
+            # Grow population in each territory (5% per tick, capped by richness)
+            pop_rows = (
+                db.query(TerritoryPopulation, Territory.mineral_richness, Territory.fuel_richness)
+                .join(Territory, TerritoryPopulation.territory_id == Territory.id)
                 .filter(TerritoryPopulation.territory_id.in_(territory_ids))
                 .all()
             )
-            population_delta = len(pops) * POPULATION_GROWTH_PER_TICK
-            for pop in pops:
-                pop.current += POPULATION_GROWTH_PER_TICK
-                pop.last_updated = tick_at
+            population_delta = 0
+            for pop, mineral_richness, fuel_richness in pop_rows:
+                cap = round(POPULATION_CAP_MULTIPLIER * (float(mineral_richness) + float(fuel_richness)))
+                if pop.current < cap:
+                    growth = min(round(pop.current * POPULATION_GROWTH_RATE), cap - pop.current)
+                    pop.current += growth
+                    population_delta += growth
+                    pop.last_updated = tick_at
 
             if minerals_delta or fuel_delta or population_delta:
                 nation.minerals += minerals_delta

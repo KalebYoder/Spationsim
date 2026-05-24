@@ -17,8 +17,9 @@ PROBE_STATS = {
     "required_facility": "probe_factory",
 }
 
-POPULATION_GROWTH_PER_TICK = 10
 POPULATION_START = 100
+POPULATION_GROWTH_RATE = 0.05        # 5% of current population per tick
+POPULATION_CAP_MULTIPLIER = 50       # cap = 50 × (mineral_richness + fuel_richness)
 
 FACILITY_POPULATION_COST = {
     "mine":            10,

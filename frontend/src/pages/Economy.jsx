@@ -59,7 +59,8 @@ export default function Economy() {
       f.type === 'mine' ? s + Math.round(2 * (t.mineral_richness ?? 0)) : s, 0)
     const fuel = terFacilities.reduce((s, f) =>
       f.type === 'refinery' ? s + Math.round(2 * (t.fuel_richness ?? 0)) : s, 0)
-    return { ...t, minerals_per_tick: minerals, fuel_per_tick: fuel }
+    const pop_cap = Math.round(50 * ((t.mineral_richness ?? 0) + (t.fuel_richness ?? 0)))
+    return { ...t, minerals_per_tick: minerals, fuel_per_tick: fuel, pop_cap }
   })
 
   const totalMineralsPerTick = byTerritory.reduce((s, t) => s + t.minerals_per_tick, 0)
@@ -97,7 +98,12 @@ export default function Economy() {
 
       <SectionLabel>Population</SectionLabel>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
-        <StatCard label="Total Population" value={population ? fmt(population.total) : '—'} accent="var(--purple)" />
+        <StatCard
+          label="Total Population"
+          value={population ? fmt(population.total) : '—'}
+          sub={population?.cap ? `Cap: ${fmt(population.cap)}` : undefined}
+          accent="var(--purple)"
+        />
         <StatCard label="Assigned" value={population ? fmt(population.assigned) : '—'} sub="staffing infrastructure" />
         <StatCard label="Unassigned" value={population ? fmt(population.unassigned) : '—'} sub="available to assign" accent="var(--teal)" />
       </div>
@@ -107,12 +113,13 @@ export default function Economy() {
         {byTerritory.length === 0 ? (
           <EmptyState title="No territories" body="Colonize territories to see production breakdown." />
         ) : (
-          <Table headers={['Territory', 'Minerals / tick', 'Fuel / tick', 'Distance']}>
+          <Table headers={['Territory', 'Minerals / tick', 'Fuel / tick', 'Pop Cap', 'Distance']}>
             {byTerritory.map(t => (
               <Tr key={t.id}>
                 <Td>{t.name || t.node_key}</Td>
                 <Td accent={t.minerals_per_tick > 0 ? 'amber' : undefined}>{t.minerals_per_tick}</Td>
                 <Td accent={t.fuel_per_tick > 0 ? 'teal' : undefined}>{t.fuel_per_tick}</Td>
+                <Td accent="purple">{fmt(t.pop_cap)}</Td>
                 <Td muted>{t.distance_from_center}</Td>
               </Tr>
             ))}

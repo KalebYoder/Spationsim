@@ -9,7 +9,7 @@ from ..models.player import Player
 from ..models.territory import Territory
 from ..models.territory_population import TerritoryPopulation
 from ..routers.auth import get_current_player
-from ..constants import FACILITY_POPULATION_COST
+from ..constants import FACILITY_POPULATION_COST, POPULATION_CAP_MULTIPLIER
 
 router = APIRouter(prefix="/api/economy", tags=["economy"])
 
@@ -39,14 +39,17 @@ def get_population(
     if not nation:
         raise HTTPException(status_code=404, detail="No nation found")
 
-    territory_ids = [
-        t_id for (t_id,) in
-        db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
-    ]
+    territories = db.query(Territory).filter(Territory.nation_id == nation.id).all()
+    territory_ids = [t.id for t in territories]
+
     total = int(
         db.query(func.sum(TerritoryPopulation.current))
         .filter(TerritoryPopulation.territory_id.in_(territory_ids))
         .scalar() or 0
+    )
+    cap = sum(
+        round(POPULATION_CAP_MULTIPLIER * (float(t.mineral_richness) + float(t.fuel_richness)))
+        for t in territories
     )
     facilities = (
         db.query(Infrastructure)
@@ -55,4 +58,4 @@ def get_population(
         .all()
     )
     assigned = sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in facilities)
-    return {"total": total, "assigned": assigned, "unassigned": total - assigned}
+    return {"total": total, "cap": cap, "assigned": assigned, "unassigned": total - assigned}
