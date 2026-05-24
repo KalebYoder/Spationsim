@@ -3,8 +3,9 @@ import { Card, SectionLabel, EmptyState, Table, Tr, Td, Badge, Btn, StatCard } f
 
 const UNIT_LABELS = { starfighter: 'Starfighter' }
 
-function ManufactureForm({ unit, onManufactured, onCancel }) {
+function ManufactureForm({ unit, factoryTerritories, onManufactured, onCancel }) {
   const [quantity, setQuantity] = useState(1)
+  const [territoryId, setTerritoryId] = useState(factoryTerritories[0]?.id ?? '')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -12,6 +13,7 @@ function ManufactureForm({ unit, onManufactured, onCancel }) {
   const fuelCost = unit.manufacture_cost_fuel * quantity
 
   const handleBuild = async () => {
+    if (!territoryId) { setError('Select a territory'); return }
     setSubmitting(true)
     setError('')
     try {
@@ -19,7 +21,7 @@ function ManufactureForm({ unit, onManufactured, onCancel }) {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity }),
+        body: JSON.stringify({ quantity, territory_id: Number(territoryId) }),
       })
       const data = await r.json()
       if (!r.ok) { setError(data.detail || 'Failed'); return }
@@ -40,6 +42,18 @@ function ManufactureForm({ unit, onManufactured, onCancel }) {
         </span>
       </div>
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Build at</div>
+          <select
+            value={territoryId}
+            onChange={e => setTerritoryId(e.target.value)}
+            style={{ padding: '6px 10px', background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}
+          >
+            {factoryTerritories.map(t => (
+              <option key={t.id} value={t.id}>{t.territory_name || t.territory_node_key}</option>
+            ))}
+          </select>
+        </div>
         <div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Quantity</div>
           <input
@@ -65,19 +79,25 @@ function ManufactureForm({ unit, onManufactured, onCancel }) {
 
 export default function Military() {
   const [units, setUnits] = useState([])
+  const [fleets, setFleets] = useState([])
+  const [facilities, setFacilities] = useState([])
   const [nation, setNation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [manufacturingUnit, setManufacturingUnit] = useState(null)
 
   const load = useCallback(async () => {
     try {
-      const [uRes, nRes] = await Promise.all([
+      const [uRes, nRes, fRes, facRes] = await Promise.all([
         fetch('/api/military/units', { credentials: 'include' }),
         fetch('/api/nations/mine', { credentials: 'include' }),
+        fetch('/api/military/fleets', { credentials: 'include' }),
+        fetch('/api/facilities', { credentials: 'include' }),
       ])
-      const [u, n] = await Promise.all([uRes.json(), nRes.json()])
+      const [u, n, f, fac] = await Promise.all([uRes.json(), nRes.json(), fRes.json(), facRes.json()])
       setUnits(u)
       setNation(n)
+      setFleets(f)
+      setFacilities(fac)
     } finally {
       setLoading(false)
     }
@@ -85,15 +105,19 @@ export default function Military() {
 
   useEffect(() => { load() }, [load])
 
-  const handleManufactured = updatedNation => {
-    setNation(updatedNation)
+  const handleManufactured = () => {
     setManufacturingUnit(null)
     load()
   }
 
   if (loading) return <p style={{ color: 'var(--text-muted)' }}>Loading&hellip;</p>
 
-  const totalReserve = units.reduce((s, u) => s + u.reserve, 0)
+  const stationedFleets = fleets.filter(f => f.status === 'stationed')
+  const transitFleets = fleets.filter(f => f.status === 'in_transit')
+  const totalUnits = fleets.reduce((s, f) => s + f.unit_count, 0)
+
+  // Territories that have a fighter factory (for manufacture form)
+  const factoryTerritories = facilities.filter(f => f.type === 'fighter_factory')
 
   return (
     <div>
@@ -106,21 +130,23 @@ export default function Military() {
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <Btn variant="ghost" disabled>Declare War</Btn>
-          <Btn variant="amber" disabled>Launch Fleet</Btn>
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 14, marginBottom: 28 }}>
-        <StatCard label="Reserve Units" value={totalReserve} />
+        <StatCard label="Total Fighters" value={totalUnits} />
+        <StatCard label="Stationed" value={stationedFleets.reduce((s, f) => s + f.unit_count, 0)} accent="var(--teal)" />
+        <StatCard label="In Transit" value={transitFleets.reduce((s, f) => s + f.unit_count, 0)} accent="var(--amber)" />
         <StatCard label="Minerals" value={nation ? parseFloat(nation.minerals).toFixed(0) : '—'} accent="var(--amber)" />
         <StatCard label="Fuel" value={nation ? parseFloat(nation.fuel).toFixed(0) : '—'} accent="var(--teal)" />
       </div>
 
-      <SectionLabel>Unit Roster</SectionLabel>
+      <SectionLabel>Unit Types</SectionLabel>
 
       {manufacturingUnit && (
         <ManufactureForm
           unit={manufacturingUnit}
+          factoryTerritories={factoryTerritories}
           onManufactured={handleManufactured}
           onCancel={() => setManufacturingUnit(null)}
         />
@@ -130,7 +156,7 @@ export default function Military() {
         {units.length === 0 ? (
           <EmptyState title="No unit types available" body="Build a fighter factory to unlock starfighters." />
         ) : (
-          <Table headers={['Unit', 'ATK', 'DEF', 'HP', 'Speed', 'In Reserve', 'Manufacture Cost', '']}>
+          <Table headers={['Unit', 'ATK', 'DEF', 'HP', 'Speed', 'Manufacture Cost', '']}>
             {units.map(u => (
               <Tr key={u.type}>
                 <Td><Badge color="rose">{UNIT_LABELS[u.type] || u.type}</Badge></Td>
@@ -138,20 +164,59 @@ export default function Military() {
                 <Td>{u.defense}</Td>
                 <Td>{u.hp}</Td>
                 <Td muted>{u.nodes_per_tick} node{u.nodes_per_tick !== 1 ? 's' : ''}/tick</Td>
-                <Td accent={u.reserve > 0 ? 'amber' : undefined}>{u.reserve}</Td>
                 <Td muted>{u.manufacture_cost_minerals}M / {u.manufacture_cost_fuel}F</Td>
                 <Td>
-                  <Btn
-                    variant="ghost"
-                    onClick={() => setManufacturingUnit(manufacturingUnit?.type === u.type ? null : u)}
-                    style={{ padding: '3px 10px', fontSize: 12 }}
-                  >
-                    Manufacture
-                  </Btn>
+                  {factoryTerritories.length > 0 ? (
+                    <Btn
+                      variant="ghost"
+                      onClick={() => setManufacturingUnit(manufacturingUnit?.type === u.type ? null : u)}
+                      style={{ padding: '3px 10px', fontSize: 12 }}
+                    >
+                      Manufacture
+                    </Btn>
+                  ) : (
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No factory</span>
+                  )}
                 </Td>
               </Tr>
             ))}
+          </Table>
+        )}
+      </Card>
 
+      <SectionLabel>Stationed Fleets</SectionLabel>
+      <Card style={{ padding: 0, marginBottom: 28 }}>
+        {stationedFleets.length === 0 ? (
+          <EmptyState title="No stationed fighters" body="Manufacture starfighters at a fighter factory. Use the map to deploy them." />
+        ) : (
+          <Table headers={['Territory', 'Fighters', 'Actions']}>
+            {stationedFleets.map(f => (
+              <Tr key={f.id}>
+                <Td>{f.origin_name || f.origin_node_key}</Td>
+                <Td accent="teal">{f.unit_count}</Td>
+                <Td>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Use the Map to deploy</span>
+                </Td>
+              </Tr>
+            ))}
+          </Table>
+        )}
+      </Card>
+
+      <SectionLabel>In Transit</SectionLabel>
+      <Card style={{ padding: 0, marginBottom: 28 }}>
+        {transitFleets.length === 0 ? (
+          <EmptyState title="No fleets in transit" />
+        ) : (
+          <Table headers={['Fighters', 'From', 'To', 'Arrives']}>
+            {transitFleets.map(f => (
+              <Tr key={f.id}>
+                <Td accent="amber">{f.unit_count}</Td>
+                <Td muted>{f.origin_name || f.origin_node_key}</Td>
+                <Td>{f.destination_name || f.destination_node_key}</Td>
+                <Td muted>{f.arrives_at ? new Date(f.arrives_at).toLocaleString() : '—'}</Td>
+              </Tr>
+            ))}
           </Table>
         )}
       </Card>
@@ -162,28 +227,6 @@ export default function Military() {
           title="No pending confirmations"
           body="Fleets arriving at your territories will appear here. You have 4 hours (2 ticks) to confirm or recall before standing orders execute."
         />
-      </Card>
-
-      <SectionLabel>Incoming Fleets</SectionLabel>
-      <Card style={{ padding: 0 }}>
-        <Table headers={['Nation', 'Fleet Size', 'Destination', 'ETA', 'Window Expires', 'Action']}>
-          <Tr>
-            <Td colSpan={6} style={{ textAlign: 'center', padding: '40px 0' }}>
-              <EmptyState title="No incoming fleets" />
-            </Td>
-          </Tr>
-        </Table>
-      </Card>
-
-      <SectionLabel>Your Fleets</SectionLabel>
-      <Card style={{ padding: 0 }}>
-        <Table headers={['Fleet', 'Units', 'Status', 'Origin', 'Destination', 'ETA', 'Standing Order', 'Actions']}>
-          <Tr>
-            <Td colSpan={8} style={{ textAlign: 'center', padding: '40px 0' }}>
-              <EmptyState title="No fleets" body="Build military units and launch fleets from your territories." />
-            </Td>
-          </Tr>
-        </Table>
       </Card>
 
       <SectionLabel>Active Wars</SectionLabel>

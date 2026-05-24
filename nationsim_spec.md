@@ -156,6 +156,44 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ---
 
+## Known Issues / To-Fix List
+
+*Identified by game design review against genre best practices. Ordered by priority.*
+
+### Best Practice Violations
+
+1. **Resource richness ignored in production** — Mines and refineries produce flat 5 regardless of node richness. Players see richness during nation creation and expect it to matter. Fix: `production = round(2 × richness)` per facility per tick. *(In progress)*
+
+2. **Starfighters stored as a nation-level count, not positioned fleets** — Units that move 2 nodes/tick need a location. Storing as a single integer makes fleet positioning impossible and is hard to reverse once players have units. Fix: each territory has a stationed count; send operations create in-transit fleet rows. *(In progress)*
+
+3. **Population growth uncapped and independent of player action** — Flat +10/territory/tick means manufacturing fighters (which permanently consumes population) never feels like a real tradeoff, since deficits refill automatically. Needs a cap or a formula that ties growth to infrastructure.
+
+4. **No persistent map page** — Map only appears during nation creation. Territorial awareness, probe intel, and fleet positioning all require a live map. *(Fixed: MapView page exists)*
+
+5. **No colonization mechanic with no territory limit** — Expansion is uncapped and free. Needs either a colony ship mechanic or an explicit placeholder cost before beta so the expansion loop is testable.
+
+6. **Vacation mode has no exit cooldown** — Without one it's a combat dodge. Must be defined before any combat ships, even if just a timer.
+
+### Missing Standard Features
+
+1. **No player-to-player interaction** — No trade, messaging, or war declaration. Need at least one social mechanism for beta; even resource gifting suffices.
+
+2. **No tick event log** — Players have a countdown but no record of what changed last tick. Standard: event log or last-tick summary showing production, population delta, probe arrivals.
+
+3. **No facility limits per territory** — No reason to hold more than one territory if facilities can stack infinitely at home. Needs a per-territory slot cap.
+
+4. **No military upkeep** — Units cost population to build but have zero ongoing cost. Players stockpile indefinitely with no decay loop. Fuel upkeep is the standard mechanism.
+
+5. **No score or power metric** — No competitive reference frame for beta players; no matchmaking signal for combat. Even a simple composite stat on a leaderboard suffices.
+
+6. **Probe reward loop closed** — Probes are manufactured and moved but results can't be viewed in the UI and can't be shared. Need a probe report view.
+
+7. **No per-territory base income** — Only income is mines and refineries; strategic question reduces to "how many facilities do I build." Small per-territory flat income would give rim territories value.
+
+8. **Territory renaming has no cooldown** — Can be used to confuse map intel mid-war. One-tick cooldown sufficient.
+
+---
+
 ## Development Order
 
 ### Phase 1 — Foundation

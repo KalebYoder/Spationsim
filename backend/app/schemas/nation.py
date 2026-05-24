@@ -66,13 +66,52 @@ class ManufactureRequest(BaseModel):
         return v
 
 
+class StarfighterManufactureRequest(BaseModel):
+    quantity: int
+    territory_id: int
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Quantity must be at least 1")
+        return v
+
+
+class SendFleetRequest(BaseModel):
+    from_territory_id: int
+    to_territory_id: int
+    quantity: int
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Quantity must be at least 1")
+        return v
+
+
+class FleetResponse(BaseModel):
+    id: int
+    unit_count: int
+    status: str
+    origin_territory_id: int | None
+    origin_node_key: str | None
+    origin_name: str | None
+    destination_territory_id: int | None
+    destination_node_key: str | None
+    destination_name: str | None
+    arrives_at: str | None
+
+    model_config = {"from_attributes": True}
+
+
 class UnitStatsResponse(BaseModel):
     type: str
     attack: int
     defense: int
     hp: int
     nodes_per_tick: int
-    reserve: int
     manufacture_cost_minerals: int
     manufacture_cost_fuel: int
 

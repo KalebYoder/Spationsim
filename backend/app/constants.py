@@ -17,10 +17,18 @@ PROBE_STATS = {
     "required_facility": "probe_factory",
 }
 
-FACILITY_PRODUCTION = {
-    "mine":     {"minerals": 5, "fuel": 0},
-    "refinery": {"minerals": 0, "fuel": 5},
+POPULATION_GROWTH_PER_TICK = 10
+POPULATION_START = 100
+
+FACILITY_POPULATION_COST = {
+    "mine":            10,
+    "refinery":        10,
+    "probe_factory":   20,
+    "fighter_factory": 40,
 }
+
+# Production formula: round(2 * territory_richness) per facility per tick
+# mines use mineral_richness, refineries use fuel_richness
 
 FACILITY_COSTS = {
     "mine":            {"minerals": 20, "fuel": 10},

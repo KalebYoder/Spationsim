@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { StatCard, Card, SectionLabel, EmptyState, Table, Tr, Td } from '../components/ui'
 
-const PRODUCTION = { mine: { minerals: 5, fuel: 0 }, refinery: { minerals: 0, fuel: 5 } }
 const fmt = n => Number(n ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })
 
 function useCountdown(targetMs) {
@@ -53,11 +52,13 @@ export default function Economy() {
 
   if (loading) return <p style={{ color: 'var(--text-muted)' }}>Loading&hellip;</p>
 
-  // Per-territory production
+  // Per-territory production: round(2 × richness) per facility
   const byTerritory = territories.map(t => {
     const terFacilities = facilities.filter(f => f.territory_id === t.id)
-    const minerals = terFacilities.reduce((s, f) => s + (PRODUCTION[f.type]?.minerals ?? 0), 0)
-    const fuel = terFacilities.reduce((s, f) => s + (PRODUCTION[f.type]?.fuel ?? 0), 0)
+    const minerals = terFacilities.reduce((s, f) =>
+      f.type === 'mine' ? s + Math.round(2 * (t.mineral_richness ?? 0)) : s, 0)
+    const fuel = terFacilities.reduce((s, f) =>
+      f.type === 'refinery' ? s + Math.round(2 * (t.fuel_richness ?? 0)) : s, 0)
     return { ...t, minerals_per_tick: minerals, fuel_per_tick: fuel }
   })
 
