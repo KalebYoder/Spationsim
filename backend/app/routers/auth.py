@@ -3,6 +3,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.player import Player
+from ..models.nation import Nation
 from ..schemas.auth import LoginRequest, PlayerResponse, RegisterRequest
 from ..core.security import create_access_token, decode_token, hash_password, verify_password
 from ..core.config import settings
@@ -11,6 +12,16 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _COOKIE = "session"
 _COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+
+
+def _player_response(player: Player, db: Session) -> PlayerResponse:
+    has_nation = db.query(Nation).filter(Nation.player_id == player.id).first() is not None
+    return PlayerResponse(
+        id=player.id,
+        username=player.username,
+        email=player.email,
+        has_nation=has_nation,
+    )
 
 
 def _set_session_cookie(response: Response, player_id: int) -> None:
@@ -57,7 +68,7 @@ def register(body: RegisterRequest, response: Response, db: Session = Depends(ge
     db.refresh(player)
 
     _set_session_cookie(response, player.id)
-    return player
+    return _player_response(player, db)
 
 
 @router.post("/login", response_model=PlayerResponse)
@@ -72,7 +83,7 @@ def login(body: LoginRequest, response: Response, db: Session = Depends(get_db))
     db.commit()
 
     _set_session_cookie(response, player.id)
-    return player
+    return _player_response(player, db)
 
 
 @router.post("/logout")
@@ -82,5 +93,5 @@ def logout(response: Response):
 
 
 @router.get("/me", response_model=PlayerResponse)
-def me(player: Player = Depends(get_current_player)):
-    return player
+def me(player: Player = Depends(get_current_player), db: Session = Depends(get_db)):
+    return _player_response(player, db)

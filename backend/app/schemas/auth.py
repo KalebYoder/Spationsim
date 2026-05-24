@@ -34,5 +34,6 @@ class PlayerResponse(BaseModel):
     id: int
     username: str
     email: str
+    has_nation: bool = False
 
     model_config = {"from_attributes": True}
