@@ -52,3 +52,16 @@ class TerritoryResponse(BaseModel):
     distance_from_center: int
 
     model_config = {"from_attributes": True}
+
+
+class TerritoryMapResponse(BaseModel):
+    id: int
+    node_key: str
+    distance_from_center: int
+    is_colonized: bool
+    nation_id: int | None
+    nation_name: str | None
+    mineral_richness: float
+    fuel_richness: float
+
+    model_config = {"from_attributes": True}

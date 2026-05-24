@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 
 const HEX_SIZE = 9
 const SVG_W = 700
@@ -216,6 +217,7 @@ function StepConfirm({ data, territory, onSubmit, onBack, loading, error }) {
 
 export default function NationCreate() {
   const navigate = useNavigate()
+  const { refreshPlayer } = useAuth()
   const [step, setStep] = useState(1)
   const [form, setForm] = useState({ name: '', currency_name: 'Credits', flag_color: '#3A86FF' })
   const [selectedTerritoryId, setSelectedTerritoryId] = useState(null)
@@ -256,6 +258,7 @@ export default function NationCreate() {
         setSubmitError(err.detail || 'Failed to create nation')
         return
       }
+      await refreshPlayer()
       navigate('/', { replace: true })
     } catch {
       setSubmitError('Network error — please try again')

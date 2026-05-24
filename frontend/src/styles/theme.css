@@ -1,0 +1,78 @@
+/* Pillars of Creation palette — Eagle Nebula */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* Backgrounds — deep space */
+  --bg-base:     #07080f;
+  --bg-surface:  #0c0e1d;
+  --bg-elevated: #11142a;
+  --bg-hover:    #181c38;
+
+  /* Borders */
+  --border:      #1f2344;
+  --border-mid:  #2a2f58;
+
+  /* Text */
+  --text-primary:   #dde5f5;
+  --text-secondary: #7585b8;
+  --text-muted:     #3a4268;
+
+  /* Accent — teal of the star-forming regions */
+  --teal:     #3ec9b4;
+  --teal-dim: #122e2a;
+
+  /* Amber — the illuminated pillar columns */
+  --amber:     #e8943a;
+  --amber-dim: #3a2310;
+
+  /* Purple — deep nebula background */
+  --purple:     #9268d4;
+  --purple-dim: #201438;
+
+  /* Rose — dusty pillar edges */
+  --rose:     #b87898;
+  --rose-dim: #2e1828;
+
+  /* Status */
+  --danger:     #d45050;
+  --danger-dim: #2e1010;
+  --success:    #3ec9b4;
+  --warning:    #e8943a;
+
+  /* Layout */
+  --nav-width: 210px;
+  --radius:    8px;
+  --radius-sm: 4px;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a { color: inherit; text-decoration: none; }
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  border: none;
+  outline: none;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 3px; }

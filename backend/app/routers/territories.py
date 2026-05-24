@@ -2,9 +2,32 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.territory import Territory
-from ..schemas.nation import TerritoryResponse
+from ..models.nation import Nation
+from ..schemas.nation import TerritoryResponse, TerritoryMapResponse
 
 router = APIRouter(prefix="/api/territories", tags=["territories"])
+
+
+@router.get("", response_model=list[TerritoryMapResponse])
+def all_territories(db: Session = Depends(get_db)):
+    rows = (
+        db.query(Territory, Nation.name)
+        .outerjoin(Nation, Territory.nation_id == Nation.id)
+        .all()
+    )
+    return [
+        TerritoryMapResponse(
+            id=t.id,
+            node_key=t.node_key,
+            distance_from_center=t.distance_from_center,
+            is_colonized=t.is_colonized,
+            nation_id=t.nation_id,
+            nation_name=name,
+            mineral_richness=float(t.mineral_richness),
+            fuel_richness=float(t.fuel_richness),
+        )
+        for t, name in rows
+    ]
 
 
 @router.get("/available", response_model=list[TerritoryResponse])
