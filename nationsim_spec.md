@@ -129,17 +129,17 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ## Tech Stack
 
-| Component | Choice | Notes |
-|---|---|---|
-| Server | Bare metal home server (Xeon E3-1200, 16GB RAM, ~20TB free) | Sufficient for closed beta |
-| OS | CentOS Linux | Familiar to developer |
-| Containerization | Docker Compose | Identical environments on bare metal and cloud; simplifies future migration |
-| Database | PostgreSQL | Handles complex relational queries; runs in container |
-| Backend | Python / FastAPI | Async support; best-in-class AI dev tooling |
-| Task Queue | Celery + Redis | Handles all timed game events reliably |
-| Frontend | React | Standard; well-supported by agentic AI tooling |
-| Reverse Proxy | Nginx | Serves frontend static assets; proxies API |
-| DNS / DDoS Protection | Cloudflare (free tier) | Hides origin IP; handles SSL; DDoS mitigation |
+| Component | Choice | Status | Notes |
+|---|---|---|---|
+| Server | Bare metal home server (Xeon E3-1200, 16GB RAM, ~20TB free) | N/A (deployment) | Sufficient for closed beta |
+| OS | CentOS Linux | N/A (deployment) | Familiar to developer |
+| Containerization | Docker Compose | **Done** | All services defined with health checks |
+| Database | PostgreSQL | **Done** | Service configured; full SQLAlchemy model layer with DBA-reviewed indexes |
+| Backend | Python / FastAPI | **Done** | App skeleton, auth router, all ORM models |
+| Task Queue | Celery + Redis | **Partial** | Redis service running; `celery` in requirements.txt — no worker service, no app instance, no tasks defined yet |
+| Frontend | React + Vite | **Done** | Scaffold, AuthContext, login/register pages, protected routing |
+| Reverse Proxy | Nginx | **Done** | Config written, wired into Docker Compose |
+| DNS / DDoS Protection | Cloudflare (free tier) | N/A (deployment) | Hides origin IP; handles SSL; DDoS mitigation |
 
 ### Container Layout (Approximate Resource Caps)
 - PostgreSQL: ~4GB RAM
@@ -159,7 +159,7 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 ## Development Order
 
 ### Phase 1 — Foundation
-- [ ] Auth system (registration, login, sessions, security)
+- [x] Auth system (registration, login, sessions, security)
 - [ ] Nation creation flow
 - [ ] Rough draft UI skeleton
 - [ ] Basic map representation (placeholder — hex grid or node graph)
@@ -233,4 +233,4 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ---
 
-*Last updated: open questions resolved, moving to database schema*
+*Last updated: auth system complete, Celery worker still needed, Phase 1 in progress*
