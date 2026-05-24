@@ -13,10 +13,12 @@ function hexToSvg(q, r) {
   ]
 }
 
-function distanceColor(dist) {
+function nodeColor(territory) {
+  if (territory.territory_type === 'void') return '#2a2a3a'
+  const dist = territory.distance_from_center
   if (dist <= 2)  return '#f4a261'
-  if (dist <= 6)  return '#457b9d'
-  if (dist <= 10) return '#52796f'
+  if (dist <= 4)  return '#457b9d'
+  if (dist <= 6)  return '#52796f'
   return '#6c757d'
 }
 
@@ -131,20 +133,21 @@ function StepMapPicker({ selectedId, onSelect, planetName, onPlanetName, onNext,
           {territories.map(t => {
             const [q, r] = t.node_key.split(',').map(Number)
             const [x, y] = hexToSvg(q, r)
+            const isVoid = t.territory_type === 'void'
             const isSelected = t.id === selectedId
-            const isHovered = t.id === hovered
+            const isHovered = t.id === hovered && !isVoid
             return (
               <circle
                 key={t.id}
                 cx={x}
                 cy={y}
-                r={isSelected ? 5.5 : 3.5}
-                fill={distanceColor(t.distance_from_center)}
+                r={isSelected ? 5.5 : isVoid ? 2.5 : 3.5}
+                fill={nodeColor(t)}
                 stroke={isSelected ? '#fff' : isHovered ? '#ccc' : 'none'}
                 strokeWidth={isSelected ? 1.5 : 1}
-                style={{ cursor: 'pointer', opacity: isHovered || isSelected ? 1 : 0.7 }}
-                onClick={() => onSelect(t.id)}
-                onMouseEnter={() => setHovered(t.id)}
+                style={{ cursor: isVoid ? 'default' : 'pointer', opacity: isVoid ? 0.4 : isHovered || isSelected ? 1 : 0.7 }}
+                onClick={() => !isVoid && onSelect(t.id)}
+                onMouseEnter={() => !isVoid && setHovered(t.id)}
                 onMouseLeave={() => setHovered(null)}
               />
             )

@@ -88,6 +88,7 @@ class TerritoryResponse(BaseModel):
     id: int
     node_key: str
     name: str | None
+    territory_type: str
     mineral_richness: float
     fuel_richness: float
     distance_from_center: int
@@ -134,6 +135,7 @@ class TerritoryRenameRequest(BaseModel):
 class TerritoryMapResponse(BaseModel):
     id: int
     node_key: str
+    territory_type: str
     distance_from_center: int
     is_colonized: bool
     nation_id: int | None

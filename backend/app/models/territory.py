@@ -10,6 +10,7 @@ class Territory(Base):
     id = Column(Integer, primary_key=True)
     node_key = Column(String(32), unique=True, nullable=False)
     name = Column(String(128), nullable=True)
+    territory_type = Column(String(16), nullable=False, default='normal')
     nation_id = Column(Integer, ForeignKey("nations.id"), index=True)
     mineral_richness = Column(Numeric(4, 2), nullable=False)
     fuel_richness = Column(Numeric(4, 2), nullable=False)

@@ -56,6 +56,8 @@ def build_facility(
     territory = db.get(Territory, body.territory_id)
     if not territory or territory.nation_id != nation.id:
         raise HTTPException(status_code=403, detail="You do not control this territory")
+    if territory.territory_type == 'void':
+        raise HTTPException(status_code=409, detail="Cannot build facilities in void space")
 
     cost = COSTS[body.type]
     if nation.minerals < cost["minerals"] or nation.fuel < cost["fuel"]:

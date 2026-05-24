@@ -25,6 +25,8 @@ def create_nation(
     territory = db.get(Territory, body.home_territory_id)
     if not territory:
         raise HTTPException(status_code=404, detail="Territory not found")
+    if territory.territory_type == 'void':
+        raise HTTPException(status_code=409, detail="Cannot settle in void space")
     if territory.is_colonized:
         raise HTTPException(status_code=409, detail="Territory is already occupied")
 

@@ -21,6 +21,7 @@ def all_territories(db: Session = Depends(get_db)):
         TerritoryMapResponse(
             id=t.id,
             node_key=t.node_key,
+            territory_type=t.territory_type,
             distance_from_center=t.distance_from_center,
             is_colonized=t.is_colonized,
             nation_id=t.nation_id,
@@ -36,7 +37,7 @@ def all_territories(db: Session = Depends(get_db)):
 def available_territories(db: Session = Depends(get_db)):
     return (
         db.query(Territory)
-        .filter(Territory.is_colonized == False)
+        .filter(Territory.is_colonized == False, Territory.territory_type == 'normal')
         .order_by(Territory.distance_from_center)
         .all()
     )
