@@ -233,4 +233,20 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ---
 
+---
+
+## Dev Environment Credentials
+
+> **WARNING — change these before exposing the server to the internet.**
+> This file is tracked by git. Remove this section or rotate these values before pushing to a public repo or opening a port to the outside world.
+
+| Variable | Value |
+|---|---|
+| `DB_PASSWORD` | `SpationDev2026` |
+| `SECRET_KEY` | `CaoTU4MqP5BVyuXc6ktbjEL7dG1pZ9RDAgWfKIHln3mYsxeO` |
+
+These are written to `.env` (git-ignored). To rotate: update `.env` and restart the stack. Rotating `SECRET_KEY` invalidates all existing sessions.
+
+---
+
 *Last updated: auth system complete, Celery worker still needed, Phase 1 in progress*
