@@ -7,7 +7,9 @@ from ..models.territory import Territory
 from ..models.player import Player
 from ..schemas.nation import InfrastructureBuildRequest, InfrastructureResponse
 from ..routers.auth import get_current_player
-from ..constants import FACILITY_COSTS
+from sqlalchemy import func
+from ..models.territory_population import TerritoryPopulation
+from ..constants import FACILITY_COSTS, FACILITY_POPULATION_COST
 
 router = APIRouter(prefix="/api/facilities", tags=["facilities"])
 
@@ -62,6 +64,29 @@ def build_facility(
     cost = COSTS[body.type]
     if nation.minerals < cost["minerals"] or nation.fuel < cost["fuel"]:
         raise HTTPException(status_code=409, detail="Insufficient resources")
+
+    pop_cost = FACILITY_POPULATION_COST.get(body.type, 0)
+    if pop_cost > 0:
+        territory_ids = [
+            t_id for (t_id,) in
+            db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
+        ]
+        total_pop = db.query(func.sum(TerritoryPopulation.current)).filter(
+            TerritoryPopulation.territory_id.in_(territory_ids)
+        ).scalar() or 0
+        existing_facilities = (
+            db.query(Infrastructure)
+            .join(Territory, Infrastructure.territory_id == Territory.id)
+            .filter(Territory.nation_id == nation.id)
+            .all()
+        )
+        assigned_pop = sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in existing_facilities)
+        unassigned = int(total_pop) - assigned_pop
+        if unassigned < pop_cost:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Insufficient unassigned population (need {pop_cost}, have {unassigned})",
+            )
 
     nation.minerals -= cost["minerals"]
     nation.fuel -= cost["fuel"]

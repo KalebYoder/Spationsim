@@ -7,7 +7,8 @@ from ..models.infrastructure import Infrastructure
 from ..models.territory import Territory
 from ..models.resource_log import ResourceLog
 from ..models.event import Event
-from ..constants import FACILITY_PRODUCTION
+from ..models.territory_population import TerritoryPopulation
+from ..constants import FACILITY_PRODUCTION, POPULATION_GROWTH_PER_TICK
 
 
 @celery_app.task(name="app.tasks.tick.run_tick")
@@ -18,6 +19,11 @@ def run_tick():
         nations = db.query(Nation).all()
 
         for nation in nations:
+            territory_ids = [
+                t_id for (t_id,) in
+                db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
+            ]
+
             facilities = (
                 db.query(Infrastructure.type)
                 .join(Territory, Infrastructure.territory_id == Territory.id)
@@ -32,7 +38,18 @@ def run_tick():
                 minerals_delta += production.get("minerals", 0)
                 fuel_delta += production.get("fuel", 0)
 
-            if minerals_delta or fuel_delta:
+            # Grow population in each territory
+            pops = (
+                db.query(TerritoryPopulation)
+                .filter(TerritoryPopulation.territory_id.in_(territory_ids))
+                .all()
+            )
+            population_delta = len(pops) * POPULATION_GROWTH_PER_TICK
+            for pop in pops:
+                pop.current += POPULATION_GROWTH_PER_TICK
+                pop.last_updated = tick_at
+
+            if minerals_delta or fuel_delta or population_delta:
                 nation.minerals += minerals_delta
                 nation.fuel += fuel_delta
                 db.add(ResourceLog(
@@ -40,7 +57,7 @@ def run_tick():
                     tick_at=tick_at,
                     minerals_delta=minerals_delta,
                     fuel_delta=fuel_delta,
-                    population_delta=0,
+                    population_delta=population_delta,
                 ))
 
         db.add(Event(

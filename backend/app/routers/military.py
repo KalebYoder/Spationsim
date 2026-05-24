@@ -7,7 +7,8 @@ from ..models.territory import Territory
 from ..models.player import Player
 from ..schemas.nation import ManufactureRequest, NationResponse, UnitStatsResponse
 from ..routers.auth import get_current_player
-from ..constants import UNIT_STATS
+from ..models.territory_population import TerritoryPopulation
+from ..constants import UNIT_STATS, FACILITY_POPULATION_COST
 
 router = APIRouter(prefix="/api/military", tags=["military"])
 
@@ -61,6 +62,44 @@ def manufacture_starfighter(
 
     if nation.minerals < mineral_cost or nation.fuel < fuel_cost:
         raise HTTPException(status_code=409, detail="Insufficient resources")
+
+    # Each starfighter consumes 1 population permanently
+    territory_ids = [
+        t_id for (t_id,) in
+        db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
+    ]
+    existing_facilities = (
+        db.query(Infrastructure)
+        .join(Territory, Infrastructure.territory_id == Territory.id)
+        .filter(Territory.nation_id == nation.id)
+        .all()
+    )
+    assigned_pop = sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in existing_facilities)
+    from sqlalchemy import func as sqlfunc
+    total_pop = db.query(sqlfunc.sum(TerritoryPopulation.current)).filter(
+        TerritoryPopulation.territory_id.in_(territory_ids)
+    ).scalar() or 0
+    unassigned = int(total_pop) - assigned_pop
+    if unassigned < body.quantity:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Insufficient unassigned population (need {body.quantity}, have {unassigned})",
+        )
+
+    # Deduct population from territories (highest first)
+    qty_remaining = body.quantity
+    pops = (
+        db.query(TerritoryPopulation)
+        .filter(TerritoryPopulation.territory_id.in_(territory_ids))
+        .order_by(TerritoryPopulation.current.desc())
+        .all()
+    )
+    for pop in pops:
+        if qty_remaining <= 0:
+            break
+        deduct = min(qty_remaining, pop.current)
+        pop.current -= deduct
+        qty_remaining -= deduct
 
     nation.minerals -= mineral_cost
     nation.fuel -= fuel_cost

@@ -4,9 +4,11 @@ from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.nation import Nation
 from ..models.territory import Territory
+from ..models.territory_population import TerritoryPopulation
 from ..models.player import Player
 from ..schemas.nation import NationCreateRequest, NationResponse, TerritoryResponse
 from ..routers.auth import get_current_player
+from ..constants import POPULATION_START
 
 router = APIRouter(prefix="/api/nations", tags=["nations"])
 
@@ -46,6 +48,12 @@ def create_nation(
     territory.is_colonized = True
     territory.colonized_at = datetime.now(timezone.utc)
     territory.name = body.home_planet_name
+
+    db.add(TerritoryPopulation(
+        territory_id=territory.id,
+        current=POPULATION_START,
+        growth_rate=0,
+    ))
 
     db.commit()
     db.refresh(nation)
