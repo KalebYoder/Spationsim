@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 from ..db.database import get_db
+from ..models.colony_ship import ColonyShip
+from ..models.event import Event
 from ..models.fleet import Fleet
 from ..models.infrastructure import Infrastructure
 from ..models.nation import Nation
@@ -11,17 +13,35 @@ from ..models.territory import Territory
 from ..models.territory_population import TerritoryPopulation
 from ..models.player import Player
 from ..schemas.nation import (
+    ClaimTerritoryResponse,
+    ColonyShipCargoRequest,
+    ColonyShipResponse,
+    ColonyShipStatsResponse,
     FleetResponse,
+    ManufactureColonyShipRequest,
+    SendColonyShipRequest,
     SendFleetRequest,
     StarfighterManufactureRequest,
     UnitStatsResponse,
 )
 from ..routers.auth import get_current_player
-from ..constants import UNIT_STATS, FACILITY_POPULATION_COST
+from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST
 
 router = APIRouter(prefix="/api/military", tags=["military"])
 
 TICK_HOURS = 2
+
+
+def _require_aggression_allowed(player: Player) -> None:
+    if player.vacation_mode:
+        raise HTTPException(status_code=409, detail="Cannot dispatch fleets while in vacation mode")
+    now = datetime.now(timezone.utc)
+    if player.aggression_lockout_until and player.aggression_lockout_until > now:
+        until = player.aggression_lockout_until.strftime("%Y-%m-%d %H:%M UTC")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Post-vacation aggression lockout active until {until}",
+        )
 
 
 def _hex_distance(key_a: str, key_b: str) -> int:
@@ -41,6 +61,8 @@ def _fleet_response(fleet: Fleet, db: Session) -> FleetResponse:
         origin_territory_id=fleet.origin_territory,
         origin_node_key=origin.node_key if origin else None,
         origin_name=origin.name if origin else None,
+        origin_is_colonized=origin.is_colonized if origin else None,
+        origin_nation_id=origin.nation_id if origin else None,
         destination_territory_id=fleet.destination_territory,
         destination_node_key=dest.node_key if dest else None,
         destination_name=dest.name if dest else None,
@@ -120,12 +142,12 @@ def manufacture_starfighter(
         db.query(Infrastructure)
         .filter(
             Infrastructure.territory_id == territory.id,
-            Infrastructure.type == "fighter_factory",
+            Infrastructure.type == "shipyard",
         )
         .first()
     )
     if not has_factory:
-        raise HTTPException(status_code=409, detail="This territory has no fighter factory")
+        raise HTTPException(status_code=409, detail="This territory has no shipyard")
 
     stats = UNIT_STATS["starfighter"]
     mineral_cost = stats["manufacture_cost_minerals"] * body.quantity
@@ -196,6 +218,7 @@ def send_fleet(
     db: Session = Depends(get_db),
     player: Player = Depends(get_current_player),
 ):
+    _require_aggression_allowed(player)
     nation = db.query(Nation).filter(Nation.player_id == player.id).first()
     if not nation:
         raise HTTPException(status_code=404, detail="No nation found")
@@ -249,3 +272,296 @@ def send_fleet(
     db.commit()
     db.refresh(transit)
     return _fleet_response(transit, db)
+
+
+@router.post("/fleets/{fleet_id}/claim", response_model=ClaimTerritoryResponse)
+def claim_territory(
+    fleet_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    fleet = db.get(Fleet, fleet_id)
+    if not fleet or fleet.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
+
+    if fleet.status != "stationed":
+        raise HTTPException(status_code=409, detail="Fleet must be stationed to claim territory")
+
+    territory = db.get(Territory, fleet.origin_territory)
+    if not territory:
+        raise HTTPException(status_code=404, detail="Fleet has no current territory")
+
+    if territory.territory_type != "normal":
+        raise HTTPException(status_code=409, detail="Only normal territories can be claimed")
+
+    if territory.is_colonized:
+        raise HTTPException(status_code=409, detail="Territory is already claimed")
+
+    now = datetime.now(timezone.utc)
+    territory.is_colonized = True
+    territory.nation_id = nation.id
+    territory.colonized_at = now
+
+    db.add(Event(
+        type="territory_claimed",
+        payload={"nation_id": nation.id, "territory_id": territory.id, "node_key": territory.node_key},
+        scheduled_for=now,
+        processed_at=now,
+        status="processed",
+    ))
+
+    db.commit()
+    db.refresh(territory)
+    return ClaimTerritoryResponse(
+        territory_id=territory.id,
+        node_key=territory.node_key,
+        name=territory.name,
+        nation_id=territory.nation_id,
+        colonized_at=territory.colonized_at.isoformat(),
+    )
+
+
+# ── Colony ship helpers ──────────────────────────────────────────────────────
+
+def _colony_ship_response(ship: ColonyShip, db: Session) -> ColonyShipResponse:
+    origin = db.get(Territory, ship.origin_territory) if ship.origin_territory else None
+    dest = db.get(Territory, ship.destination_territory) if ship.destination_territory else None
+    origin_pop = None
+    if origin:
+        pop_row = db.query(TerritoryPopulation).filter(
+            TerritoryPopulation.territory_id == origin.id
+        ).first()
+        origin_pop = pop_row.current if pop_row else 0
+    return ColonyShipResponse(
+        id=ship.id,
+        status=ship.status,
+        cargo_population=ship.cargo_population,
+        origin_territory_id=ship.origin_territory,
+        origin_node_key=origin.node_key if origin else None,
+        origin_name=origin.name if origin else None,
+        origin_is_colonized=origin.is_colonized if origin else None,
+        origin_nation_id=origin.nation_id if origin else None,
+        origin_current_population=origin_pop,
+        destination_territory_id=ship.destination_territory,
+        destination_node_key=dest.node_key if dest else None,
+        destination_name=dest.name if dest else None,
+        arrives_at=ship.arrives_at.isoformat() if ship.arrives_at else None,
+    )
+
+
+# ── Colony ship endpoints ────────────────────────────────────────────────────
+
+@router.get("/colony-ships/stats", response_model=ColonyShipStatsResponse)
+def get_colony_ship_stats(
+    player: Player = Depends(get_current_player),
+):
+    return ColonyShipStatsResponse(
+        nodes_per_tick=COLONY_SHIP_STATS["nodes_per_tick"],
+        cargo_capacity=COLONY_SHIP_STATS["cargo_capacity"],
+        manufacture_cost_minerals=COLONY_SHIP_STATS["manufacture_cost_minerals"],
+        manufacture_cost_fuel=COLONY_SHIP_STATS["manufacture_cost_fuel"],
+    )
+
+
+@router.get("/colony-ships", response_model=list[ColonyShipResponse])
+def list_colony_ships(
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+    ships = db.query(ColonyShip).filter(ColonyShip.nation_id == nation.id).all()
+    return [_colony_ship_response(s, db) for s in ships]
+
+
+@router.post("/manufacture/colony-ship", response_model=ColonyShipResponse, status_code=201)
+def manufacture_colony_ship(
+    body: ManufactureColonyShipRequest,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    territory = db.get(Territory, body.territory_id)
+    if not territory or territory.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="You do not control this territory")
+
+    has_shipyard = (
+        db.query(Infrastructure)
+        .filter(
+            Infrastructure.territory_id == territory.id,
+            Infrastructure.type == "shipyard",
+        )
+        .first()
+    )
+    if not has_shipyard:
+        raise HTTPException(status_code=409, detail="This territory has no shipyard")
+
+    mineral_cost = COLONY_SHIP_STATS["manufacture_cost_minerals"]
+    fuel_cost = COLONY_SHIP_STATS["manufacture_cost_fuel"]
+    if nation.minerals < mineral_cost or nation.fuel < fuel_cost:
+        raise HTTPException(status_code=409, detail="Insufficient resources")
+
+    nation.minerals -= mineral_cost
+    nation.fuel -= fuel_cost
+
+    ship = ColonyShip(
+        nation_id=nation.id,
+        origin_territory=territory.id,
+        cargo_population=0,
+        status="stationed",
+    )
+    db.add(ship)
+    db.commit()
+    db.refresh(ship)
+    return _colony_ship_response(ship, db)
+
+
+@router.post("/colony-ships/{ship_id}/send", response_model=ColonyShipResponse)
+def send_colony_ship(
+    ship_id: int,
+    body: SendColonyShipRequest,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    _require_aggression_allowed(player)
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    ship = db.get(ColonyShip, ship_id)
+    if not ship or ship.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Colony ship not found or does not belong to you")
+
+    if ship.status != "stationed":
+        raise HTTPException(status_code=409, detail="Colony ship is already in transit")
+
+    origin = db.get(Territory, ship.origin_territory)
+    if not origin or origin.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Origin territory is not yours")
+
+    dest = db.get(Territory, body.to_territory_id)
+    if not dest:
+        raise HTTPException(status_code=404, detail="Destination territory not found")
+    if dest.id == origin.id:
+        raise HTTPException(status_code=409, detail="Origin and destination must differ")
+    if not dest.is_colonized or dest.nation_id != nation.id:
+        raise HTTPException(status_code=409, detail="Colony ships can only travel to your own colonized territories")
+
+    now = datetime.now(timezone.utc)
+    distance = _hex_distance(origin.node_key, dest.node_key)
+    transit_ticks = ceil(distance / COLONY_SHIP_STATS["nodes_per_tick"])
+    arrives_at = now + timedelta(hours=transit_ticks * TICK_HOURS)
+
+    ship.status = "in_transit"
+    ship.destination_territory = dest.id
+    ship.departs_at = now
+    ship.arrives_at = arrives_at
+
+    db.commit()
+    db.refresh(ship)
+    return _colony_ship_response(ship, db)
+
+
+@router.post("/colony-ships/{ship_id}/load", response_model=ColonyShipResponse)
+def load_colony_ship(
+    ship_id: int,
+    body: ColonyShipCargoRequest,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    ship = db.get(ColonyShip, ship_id)
+    if not ship or ship.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Colony ship not found or does not belong to you")
+
+    if ship.status != "stationed":
+        raise HTTPException(status_code=409, detail="Colony ship must be stationed to load population")
+
+    territory = db.get(Territory, ship.origin_territory)
+    if not territory or territory.nation_id != nation.id or not territory.is_colonized:
+        raise HTTPException(status_code=409, detail="Colony ship is not at a colonized territory you own")
+    if territory.territory_type != "normal":
+        raise HTTPException(status_code=409, detail="Cannot load population from void space")
+
+    capacity = COLONY_SHIP_STATS["cargo_capacity"]
+    space_remaining = capacity - ship.cargo_population
+    if space_remaining <= 0:
+        raise HTTPException(status_code=409, detail="Colony ship cargo is full")
+
+    pop_row = db.query(TerritoryPopulation).filter(
+        TerritoryPopulation.territory_id == territory.id
+    ).first()
+    available_pop = pop_row.current if pop_row else 0
+    if available_pop <= 0:
+        raise HTTPException(status_code=409, detail="Territory has no population to load")
+
+    quantity = min(body.quantity, space_remaining, available_pop)
+    if quantity <= 0:
+        raise HTTPException(status_code=409, detail="Cannot load 0 population")
+
+    pop_row.current -= quantity
+    ship.cargo_population += quantity
+
+    db.commit()
+    db.refresh(ship)
+    return _colony_ship_response(ship, db)
+
+
+@router.post("/colony-ships/{ship_id}/unload", response_model=ColonyShipResponse)
+def unload_colony_ship(
+    ship_id: int,
+    body: ColonyShipCargoRequest,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    ship = db.get(ColonyShip, ship_id)
+    if not ship or ship.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Colony ship not found or does not belong to you")
+
+    if ship.status != "stationed":
+        raise HTTPException(status_code=409, detail="Colony ship must be stationed to unload population")
+
+    territory = db.get(Territory, ship.origin_territory)
+    if not territory or territory.nation_id != nation.id or not territory.is_colonized:
+        raise HTTPException(status_code=409, detail="Colony ship is not at a colonized territory you own")
+    if territory.territory_type != "normal":
+        raise HTTPException(status_code=409, detail="Cannot unload population into void space")
+
+    if ship.cargo_population <= 0:
+        raise HTTPException(status_code=409, detail="Colony ship has no population to unload")
+
+    quantity = min(body.quantity, ship.cargo_population)
+
+    pop_row = db.query(TerritoryPopulation).filter(
+        TerritoryPopulation.territory_id == territory.id
+    ).first()
+    if pop_row:
+        pop_row.current += quantity
+    else:
+        db.add(TerritoryPopulation(
+            territory_id=territory.id,
+            current=quantity,
+            growth_rate=0.01,
+            last_updated=datetime.now(timezone.utc),
+        ))
+
+    ship.cargo_population -= quantity
+
+    db.commit()
+    db.refresh(ship)
+    return _colony_ship_response(ship, db)

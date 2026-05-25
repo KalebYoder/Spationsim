@@ -51,6 +51,9 @@ class NationResponse(BaseModel):
     fuel: float
     starfighters: int
     probes_reserve: int
+    vacation_mode: bool
+    vacation_since: str | None
+    aggression_lockout_until: str | None
 
     model_config = {"from_attributes": True}
 
@@ -98,12 +101,66 @@ class FleetResponse(BaseModel):
     origin_territory_id: int | None
     origin_node_key: str | None
     origin_name: str | None
+    origin_is_colonized: bool | None
+    origin_nation_id: int | None
     destination_territory_id: int | None
     destination_node_key: str | None
     destination_name: str | None
     arrives_at: str | None
 
     model_config = {"from_attributes": True}
+
+
+class ClaimTerritoryResponse(BaseModel):
+    territory_id: int
+    node_key: str
+    name: str | None
+    nation_id: int
+    colonized_at: str
+
+
+class ColonyShipResponse(BaseModel):
+    id: int
+    status: str
+    cargo_population: int
+    origin_territory_id: int | None
+    origin_node_key: str | None
+    origin_name: str | None
+    origin_is_colonized: bool | None
+    origin_nation_id: int | None
+    origin_current_population: int | None
+    destination_territory_id: int | None
+    destination_node_key: str | None
+    destination_name: str | None
+    arrives_at: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class ManufactureColonyShipRequest(BaseModel):
+    territory_id: int
+
+
+class SendColonyShipRequest(BaseModel):
+    to_territory_id: int
+
+
+class ColonyShipCargoRequest(BaseModel):
+    quantity: int
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Quantity must be at least 1")
+        return v
+
+
+class ColonyShipStatsResponse(BaseModel):
+    nodes_per_tick: int
+    cargo_capacity: int
+    manufacture_cost_minerals: int
+    manufacture_cost_fuel: int
 
 
 class UnitStatsResponse(BaseModel):
@@ -142,8 +199,8 @@ class InfrastructureBuildRequest(BaseModel):
     @field_validator("type")
     @classmethod
     def validate_type(cls, v: str) -> str:
-        if v not in ("mine", "refinery", "fighter_factory", "probe_factory"):
-            raise ValueError("Type must be 'mine', 'refinery', 'fighter_factory', or 'probe_factory'")
+        if v not in ("mine", "refinery", "shipyard", "probe_factory"):
+            raise ValueError("Type must be 'mine', 'refinery', 'shipyard', or 'probe_factory'")
         return v
 
 

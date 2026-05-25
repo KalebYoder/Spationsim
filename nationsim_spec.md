@@ -76,9 +76,12 @@ Maintain a public roadmap. Be responsive to the player community. This is a diff
 - Scouting costs resources; colonization costs significantly more
 
 ### Colonization
-- Requires a colony ship dispatched from existing territory
-- Colony ships cannot leapfrog — must travel through or around existing space
-- Flanking via slow leapfrog colonization is intentional and acceptable; it costs resources and is visible
+- Two-step process: claim first, then populate
+- **Claiming unclaimed territory**: a stationed fleet (starfighters) on an unclaimed normal territory can claim it immediately via a player action. The territory becomes owned but starts with zero population — no resource extraction or facility construction is possible until population is transferred.
+- **Populating claimed territory**: colony ships transport population from an existing territory to a newly claimed one. A colony ship holds up to 100 population, travels at 1 node/tick, and can load/unload at any colonized normal territory owned by the player. Colony ships are built at shipyards (500 minerals, 1000 fuel each).
+- Probes cannot claim territory.
+- Colony ships cannot leapfrog — must travel through owned or at least reachable space (distance-based, no path-tracing in beta).
+- Flanking via slow leapfrog colonization is intentional and acceptable; it costs resources and is visible.
 
 ### Information Economy
 - Probe data is a tradeable commodity
@@ -94,6 +97,10 @@ Maintain a public roadmap. Be responsive to the player community. This is a diff
 
 ### Construction & Infrastructure
 - Players build improvements on colonized territory
+- **Facility types (beta):** Mine (minerals), Refinery (fuel), Shipyard (starfighters + colony ships), Probe Factory (probes)
+- Shipyard replaces the earlier "fighter factory" concept — it builds both combat units and colony ships from a single facility
+- Production formula: `round(2 × territory_richness)` per facility per tick
+- Each facility type has a population assignment cost (Mine: 10, Refinery: 10, Probe Factory: 20, Shipyard: 40)
 - Infrastructure has maintenance costs (post-beta: costs scale over time to cap maximum nation size)
 - Military units require infrastructure support on player territory (supply chain — post-beta)
 
@@ -120,10 +127,11 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 | Problem | Solution |
 |---|---|
-| Fleet arrives and combat triggers while offline | Confirmation window (30–60 min); combat only triggers on confirm or window expiry |
-| Can't step away during time-sensitive event | Vacation/pause mode — instant, no cooldown, no minimum duration; makes you untargetable but also unable to act or collect |
+| Fleet arrives and combat triggers while offline | Confirmation window (2 ticks / 4 hours); combat only triggers on confirm or window expiry |
+| Can't step away during time-sensitive event | Vacation mode — instant entry, no entry cooldown; 48-hour minimum stay; 48-hour aggression lockout on exit; makes you untargetable but also unable to dispatch fleets or re-enter vacation |
 | Missed timer = total loss | Soft damage model — gradual resource drain rather than single catastrophic strike |
 | No control over offline fleet behavior | Standing orders — pre-set contingency actions (hold, recall, etc.) |
+| Vacation mode used to block alliance war movement | Aggression lockout on exit prevents dispatching fleets for 48h after returning — a player who exits vacation to act as a territory blocker is exposed and unable to threaten for 48h. Long-term territorial blocking during extended vacation stays is a known open problem (see Open Questions). |
 
 ---
 
@@ -136,7 +144,7 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 | Containerization | Docker Compose | **Done** | All services defined with health checks |
 | Database | PostgreSQL | **Done** | Service configured; full SQLAlchemy model layer with DBA-reviewed indexes |
 | Backend | Python / FastAPI | **Done** | App skeleton, auth router, all ORM models |
-| Task Queue | Celery + Redis | **Partial** | Redis service running; `celery` in requirements.txt — no worker service, no app instance, no tasks defined yet |
+| Task Queue | Celery + Redis | **Done** | Tick task runs every 2 hours; processes resource generation, population growth, fleet arrivals, colony ship arrivals |
 | Frontend | React + Vite | **Done** | Scaffold, AuthContext, login/register pages, protected routing |
 | Reverse Proxy | Nginx | **Done** | Config written, wired into Docker Compose |
 | DNS / DDoS Protection | Cloudflare (free tier) | N/A (deployment) | Hides origin IP; handles SSL; DDoS mitigation |
@@ -162,17 +170,17 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ### Best Practice Violations
 
-1. **Resource richness ignored in production** — Mines and refineries produce flat 5 regardless of node richness. Players see richness during nation creation and expect it to matter. Fix: `production = round(2 × richness)` per facility per tick. *(In progress)*
+1. **Resource richness ignored in production** — *(Fixed)* Production is now `round(2 × richness)` per facility per tick.
 
-2. **Starfighters stored as a nation-level count, not positioned fleets** — Units that move 2 nodes/tick need a location. Storing as a single integer makes fleet positioning impossible and is hard to reverse once players have units. Fix: each territory has a stationed count; send operations create in-transit fleet rows. *(In progress)*
+2. **Starfighters stored as a nation-level count, not positioned fleets** — *(Fixed)* Fleets are rows in the `fleets` table with `origin_territory` tracking location; in-transit fleets have `destination_territory` and `arrives_at`; the tick lands them each cycle.
 
-3. **Population growth uncapped and independent of player action** — Flat +10/territory/tick means manufacturing fighters (which permanently consumes population) never feels like a real tradeoff, since deficits refill automatically. Needs a cap or a formula that ties growth to infrastructure.
+3. **Population growth uncapped and independent of player action** — *(Fixed)* Growth is 5% per tick, capped at `50 × (mineral_richness + fuel_richness)` per territory.
 
-4. **No persistent map page** — Map only appears during nation creation. Territorial awareness, probe intel, and fleet positioning all require a live map. *(Fixed: MapView page exists)*
+4. **No persistent map page** — *(Fixed)* MapView page exists with hex grid, fleet deployment workflow, and territory ownership display.
 
-5. **No colonization mechanic with no territory limit** — Expansion is uncapped and free. Needs either a colony ship mechanic or an explicit placeholder cost before beta so the expansion loop is testable.
+5. **No colonization mechanic with no territory limit** — *(Fixed)* Two-step colonization: fleets claim unclaimed territory, colony ships transport population. Newly claimed territory has zero population until a colony ship unloads there.
 
-6. **Vacation mode has no exit cooldown** — Without one it's a combat dodge. Must be defined before any combat ships, even if just a timer.
+6. **Vacation mode has no exit cooldown** — *(Fixed)* 48-hour minimum stay enforced on entry; 48-hour aggression lockout applied on exit (blocks fleet dispatch and vacation re-entry). See Decisions Log.
 
 ### Missing Standard Features
 
@@ -198,30 +206,35 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ### Phase 1 — Foundation
 - [x] Auth system (registration, login, sessions, security)
-- [ ] Nation creation flow
-- [ ] Rough draft UI skeleton
-- [ ] Basic map representation (placeholder — hex grid or node graph)
+- [x] Nation creation flow
+- [x] Rough draft UI skeleton
+- [x] Basic map representation (hex grid MapView with fleet deployment)
 
 ### Phase 2 — Economy
-- [ ] Resource types defined
-- [ ] Territory resource values assigned
-- [ ] Tick system (Celery + Redis)
-- [ ] Resource generation per territory per tick
-- [ ] Construction system (basic improvements)
+- [x] Resource types defined (minerals, fuel, population)
+- [x] Territory resource values assigned (richness on map generation)
+- [x] Tick system (Celery + Redis, 2-hour interval)
+- [x] Resource generation per territory per tick (`round(2 × richness)` per facility)
+- [x] Construction system (mine, refinery, shipyard, probe factory)
+- [x] Population system (5% growth per tick, richness-based cap, assignment to facilities)
+- [x] Fleet arrival processing in tick
 
 ### Phase 3 — Exploration
-- [ ] Probe mechanic (dispatch, travel, arrival)
+- [x] Probe mechanic (manufacture at probe factory, reserve system)
+- [x] Colony ship mechanic (build at shipyard, population transport, load/unload)
+- [x] Territory claiming (stationed fleet claims unclaimed territory; no population until colony ship unloads)
+- [ ] Probe dispatch and travel
 - [ ] Probe range limits (distance from nearest colony)
 - [ ] Probe detection by territory owners
-- [ ] Probe data storage (private to player)
-- [ ] Colonization mechanic (colony ship dispatch + arrival)
+- [ ] Probe data storage (private to player) and UI report view
 - [ ] Information selling between players
 
 ### Phase 4 — Combat
-- [ ] Single unit type
+- [x] Single unit type (starfighter: ATK 2, DEF 1, HP 5, 2 nodes/tick)
+- [x] Fleet movement (send, in-transit, arrival processing)
+- [x] Vacation mode (48h min stay, 48h aggression lockout on exit)
 - [ ] War declaration system
-- [ ] Fleet movement
-- [ ] Confirmation window on fleet arrival
+- [ ] Confirmation window on fleet arrival (backend logic — UI placeholder exists)
 - [ ] Basic combat resolution
 - [ ] Standing orders (hold/recall defaults)
 
@@ -260,14 +273,17 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 | Map size | 500–800 territory nodes | Supports 20–50 testers with room to expand before natural collision; revisit based on observed expansion rates |
 | Probe data transfer | Non-exclusive | Seller retains data; UI shows data age and colonization status at time of purchase to mitigate scam potential |
 | Confirmation window | 2 ticks (4 hours) | Consistent with game's internal logic; fleet holds visibly during window so defender can see it, call for help, and diplomacy can occur |
-| Vacation mode exit cooldown | Defer to veteran player input | Known abuse vector in other games; needs input from experienced players before deciding |
+| Vacation mode mechanics | Option 3: aggression lockout on exit | 48-hour minimum stay enforced; 48-hour post-exit lockout blocks fleet dispatch, colony ship dispatch, and vacation re-entry. Surveyed CyberNations, P&W, OGame, Ikariam — chosen approach maps cleanly onto single-unit-type beta. Vacation entry history is also public on player profile (transparency without additional restriction). |
+| Colonization method | Two-step: fleet claims, colony ship populates | Fleets (starfighters) claim unclaimed territory on arrival; territory starts with zero population. Colony ships (500 minerals, 1000 fuel, 1 node/tick, 100 pop capacity) transfer population to enable facility construction and resource extraction. Probes cannot claim. |
+| Shipyard replaces fighter factory | Yes | Single facility builds both starfighters and colony ships. Costs 50 minerals, 20 fuel to build; requires 40 assigned population to operate. |
+| Colony ship build cost | 500 minerals, 1000 fuel | No population cost at build time — colony ships are vessels, not population units. Population consumed only via the load action. |
 
 ## Open Questions
 
 - Does population die permanently in combat, or does it reduce and recover? (Significant design weight — bring to veteran players)
-- Vacation mode exit cooldown mechanics (bring to veteran players)
-- Population growth rate and what infrastructure affects it
-- Whether colony vulnerability window (low population, low development) creates enough natural strategic depth or needs explicit mechanics
+- Population growth rate tuning and whether specific infrastructure types (beyond mines/refineries) should influence it.
+- Whether colony vulnerability window (low population, low development) creates enough natural strategic depth or needs explicit mechanics.
+- **Vacation mode as a territory blocker**: a player in vacation mode indefinitely still denies staging ground during alliance wars. The 48h lockout solves rapid in/out exploitation but not a committed long-term blocker. Possible solutions (not yet designed): war-declaration entry block; minimum fleet-presence requirement to invoke vacation; admin enforcement. Defer until beta feedback confirms whether this is a real problem in practice.
 
 ---
 
@@ -287,4 +303,4 @@ These are written to `.env` (git-ignored). To rotate: update `.env` and restart 
 
 ---
 
-*Last updated: auth system complete, Celery worker still needed, Phase 1 in progress*
+*Last updated: Phases 1–2 complete, Phase 3 partial (colony ships + claiming done; probe dispatch/detection/data pending), Phase 4 partial (fleet movement + vacation mode done; war declaration + combat resolution pending)*

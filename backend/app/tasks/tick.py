@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 from ..celery_app import celery_app
 from ..db.database import SessionLocal
+from ..models.colony_ship import ColonyShip
+from ..models.fleet import Fleet
 from ..models.nation import Nation
 from ..models.infrastructure import Infrastructure
 from ..models.territory import Territory
@@ -65,6 +67,46 @@ def run_tick():
                     fuel_delta=fuel_delta,
                     population_delta=population_delta,
                 ))
+
+        # Land in-transit fleets that have arrived
+        arrived_fleets = (
+            db.query(Fleet)
+            .filter(Fleet.status == "in_transit", Fleet.arrives_at <= tick_at)
+            .all()
+        )
+        for fleet in arrived_fleets:
+            dest_id = fleet.destination_territory
+            existing = (
+                db.query(Fleet)
+                .filter(
+                    Fleet.nation_id == fleet.nation_id,
+                    Fleet.origin_territory == dest_id,
+                    Fleet.status == "stationed",
+                )
+                .first()
+            )
+            if existing:
+                existing.unit_count += fleet.unit_count
+                db.delete(fleet)
+            else:
+                fleet.status = "stationed"
+                fleet.origin_territory = dest_id
+                fleet.destination_territory = None
+                fleet.arrives_at = None
+                fleet.departs_at = None
+
+        # Land in-transit colony ships that have arrived
+        arrived_colony_ships = (
+            db.query(ColonyShip)
+            .filter(ColonyShip.status == "in_transit", ColonyShip.arrives_at <= tick_at)
+            .all()
+        )
+        for ship in arrived_colony_ships:
+            ship.status = "stationed"
+            ship.origin_territory = ship.destination_territory
+            ship.destination_territory = None
+            ship.arrives_at = None
+            ship.departs_at = None
 
         db.add(Event(
             type="tick",

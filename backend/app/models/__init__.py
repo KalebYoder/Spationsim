@@ -6,6 +6,7 @@ from .territory_population import TerritoryPopulation
 from .probe_data import ProbeData, ProbeDataAccess
 from .diplomacy import Diplomacy
 from .fleet import Fleet
+from .colony_ship import ColonyShip
 from .probe import Probe
 from .event import Event
 from .resource_log import ResourceLog
@@ -20,6 +21,7 @@ __all__ = [
     "ProbeDataAccess",
     "Diplomacy",
     "Fleet",
+    "ColonyShip",
     "Probe",
     "Event",
     "ResourceLog",

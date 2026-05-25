@@ -27,6 +27,7 @@ class Nation(Base):
     probe_data_access = relationship("ProbeDataAccess", back_populates="granted_to_nation",
                                      foreign_keys="ProbeDataAccess.granted_to")
     fleets = relationship("Fleet", back_populates="nation")
+    colony_ships = relationship("ColonyShip", back_populates="nation")
     probes = relationship("Probe", back_populates="nation")
     resource_logs = relationship("ResourceLog", back_populates="nation")
     diplomacy_as_a = relationship("Diplomacy", back_populates="nation_a_rel",

@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNation } from '../hooks/useNation'
-import { Card, SectionLabel, EmptyState, Table, Tr, Td, Badge, Btn, StatCard } from '../components/ui'
+import { Card, SectionLabel, EmptyState, Tr, Td, Badge, Btn, StatCard } from '../components/ui'
 
 const FACILITY_TYPES = [
   { value: 'mine',            label: 'Mine',            cost: { minerals: 20, fuel:  10 } },
   { value: 'refinery',        label: 'Refinery',        cost: { minerals: 10, fuel:  20 } },
-  { value: 'fighter_factory', label: 'Fighter Factory', cost: { minerals: 50, fuel:  20 } },
+  { value: 'shipyard', label: 'Shipyard', cost: { minerals: 50, fuel: 20 } },
   { value: 'probe_factory',   label: 'Probe Factory',   cost: { minerals: 10, fuel:   5 } },
 ]
 
@@ -125,7 +125,7 @@ export default function Facilities() {
 
   if (nationLoading || loading) return <p style={{ color: 'var(--text-muted)' }}>Loading&hellip;</p>
 
-  const typeLabel = { mine: 'Mine', refinery: 'Refinery', fighter_factory: 'Fighter Factory', probe_factory: 'Probe Factory' }
+  const typeLabel = { mine: 'Mine', refinery: 'Refinery', shipyard: 'Shipyard', probe_factory: 'Probe Factory' }
 
   const COLUMNS = [
     { key: 'type',      label: 'Type',      compare: (a, b) => (typeLabel[a.type] || a.type).localeCompare(typeLabel[b.type] || b.type) },
