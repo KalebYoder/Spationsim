@@ -108,9 +108,12 @@ Maintain a public roadmap. Be responsive to the player community. This is a diff
 - Single unit type for initial beta
 - Basic attack/defend resolution
 - War declaration required before combat (no surprise attacks)
-- Confirmation window on fleet arrival — combat does not trigger immediately
+- Confirmation window on fleet arrival — combat does not trigger immediately; fleet enters `pending_confirmation` for 2 ticks (4 hours); both sides see it
 - Players can set standing orders for fleet behavior when offline
 - Soft damage model: undefended resources drain gradually rather than all-or-nothing on single strike
+
+#### Pre-Engagement Skirmishing (Planned)
+During the confirmation window, small attrition losses occur on both sides to represent long-range hail-mary shots and perimeter skirmishes before the main engagement. These losses are minor (exact formula TBD) and happen each tick while the fleet is `pending_confirmation` or `holding`. This rewards defenders who can muster a response during the window, creates a cost for leaving a fleet parked indefinitely, and makes the confirmation window feel alive rather than a clean pause. Implementation deferred until basic combat resolution is in place.
 
 ### Player Interaction
 - Direct resource trade between players
@@ -194,11 +197,11 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 5. **No score or power metric** — No competitive reference frame for beta players; no matchmaking signal for combat. Even a simple composite stat on a leaderboard suffices.
 
-6. **Probe reward loop closed** — Probes are manufactured and moved but results can't be viewed in the UI and can't be shared. Need a probe report view.
+6. **Probe reward loop closed** — *(Fixed)* Probes page now shows a "Your Intelligence" table: coordinates, planet name (if named), mineral/fuel richness, and time since discovery. ProbeData stored per nation; `GET /api/probes/data` endpoint returns newest-first.
 
-7. **No per-territory base income** — Only income is mines and refineries; strategic question reduces to "how many facilities do I build." Small per-territory flat income would give rim territories value.
+7. **No per-territory base income** — *(Fixed)* Colonized territories with at least one mine or refinery generate 500 currency/tick (in addition to mineral/fuel output). Bare territories with no extraction facilities generate no currency income, keeping the strategic incentive to develop.
 
-8. **Territory renaming has no cooldown** — Can be used to confuse map intel mid-war. One-tick cooldown sufficient.
+8. **Territory renaming has no cooldown** — *(Fixed)* 24-hour (12-tick) cooldown enforced on rename. Attempting to rename again within the window returns a 409 with the exact remaining time.
 
 ---
 
@@ -226,7 +229,8 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 - [x] Probe dispatch and travel
 - [x] Probe range limits (distance from nearest colony)
 - [x] Probe detection by territory owners (vision scanning — owner notified on transit)
-- [ ] Probe data storage (private to player) and UI report view
+- [x] Probe data storage (private to player) — stored in `probe_data` table; per-nation isolation; `GET /api/probes/data` returns all discoveries newest-first
+- [x] Probe data UI report view — "Your Intelligence" table on Probes page: coordinates, planet name, richness values, time since discovery
 - [ ] Information selling between players
 
 ### Phase 4 — Combat
@@ -234,9 +238,9 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 - [x] Fleet movement (send, in-transit, arrival processing)
 - [x] Vacation mode (48h min stay, 48h aggression lockout on exit)
 - [ ] War declaration system
-- [ ] Confirmation window on fleet arrival (backend logic — UI placeholder exists)
-- [ ] Basic combat resolution
-- [ ] Standing orders (hold/recall defaults)
+- [x] Confirmation window on fleet arrival — fleet enters `pending_confirmation` on arrival at enemy territory; 2-tick (4h) window; attacker can confirm or recall; expiry executes standing order (hold → `holding`, recall → auto-returns in transit); both events logged for each side
+- [ ] Basic combat resolution (triggered when attacker confirms via `POST /fleets/{id}/confirm-attack`; fleet enters `engaged` status pending resolution)
+- [x] Standing orders (hold/recall defaults — applied on confirmation window expiry)
 
 ### Phase 5 — Player Interaction
 - [ ] Direct resource trading
@@ -277,6 +281,9 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 | Colonization method | Two-step: fleet claims, colony ship populates | Fleets (starfighters) claim unclaimed territory on arrival; territory starts with zero population. Colony ships (500 minerals, 1000 fuel, 1 node/tick, 100 pop capacity) transfer population to enable facility construction and resource extraction. Probes cannot claim. |
 | Shipyard replaces fighter factory | Yes | Single facility builds both starfighters and colony ships. Costs 50 minerals, 20 fuel to build; requires 40 assigned population to operate. |
 | Colony ship build cost | 500 minerals, 1000 fuel | No population cost at build time — colony ships are vessels, not population units. Population consumed only via the load action. |
+| Territory income | 500 currency/tick per colonized territory with ≥1 mine or refinery | Bare claimed territory generates zero currency. Keeps development meaningful — holding land without building yields nothing. |
+| Territory rename cooldown | 24 hours (12 ticks) | Prevents mid-war map confusion via rapid renames. Error response includes exact time remaining. |
+| Map generation | Dynamic, probe-driven; integer richness 1–5 | Seeder creates full cluster + 6-hex void ring per cluster. Probes dynamically generate territory rows for uncharted hexes they scan. Richness weighted: 75% chance of 5 at cluster center, 75% chance of 1 at rim, linear slide. Void-zone hexes have 1/1000 chance of becoming an anomaly node (5–10 richness in one resource, 0 in the other). |
 
 ## Open Questions
 
@@ -303,4 +310,4 @@ These are written to `.env` (git-ignored). To rotate: update `.env` and restart 
 
 ---
 
-*Last updated: Phases 1–2 complete, Phase 3 partial (probe dispatch/travel/range/detection done; probe data UI and info selling pending), Phase 4 partial (fleet movement + vacation mode done; war declaration + combat resolution pending), Phase 5 partial (chat + mail done; trading + marketplace + diplomacy flags pending)*
+*Last updated: Phases 1–2 complete, Phase 3 partial (probe dispatch/travel/range/detection/data storage/UI done; info selling pending), Phase 4 partial (fleet movement + vacation mode + confirmation window + standing orders done; war declaration + combat resolution pending), Phase 5 partial (chat + mail done; trading + marketplace + diplomacy flags pending). Dynamic probe-driven map generation implemented (integer richness 1–5, void rings, anomaly nodes).*

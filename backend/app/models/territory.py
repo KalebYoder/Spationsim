@@ -17,6 +17,7 @@ class Territory(Base):
     distance_from_center = Column(Integer, nullable=False, index=True)
     is_colonized = Column(Boolean, default=False, nullable=False, index=True)
     colonized_at = Column(DateTime(timezone=True))
+    last_renamed_at = Column(DateTime(timezone=True), nullable=True)
 
     nation = relationship("Nation", back_populates="territories", foreign_keys=[nation_id])
     infrastructure = relationship("Infrastructure", back_populates="territory")

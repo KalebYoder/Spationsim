@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
-from sqlalchemy import text
+from datetime import datetime, timezone, timedelta
+from math import ceil
+from sqlalchemy import text, func as sqlfunc
 from ..celery_app import celery_app
 from ..db.database import SessionLocal
 from ..models.colony_ship import ColonyShip
@@ -10,9 +11,41 @@ from ..models.territory import Territory
 from ..models.resource_log import ResourceLog
 from ..models.event import Event
 from ..models.territory_population import TerritoryPopulation
+from ..models.diplomacy import Diplomacy
 from ..models.probe import Probe
 from ..models.probe_data import ProbeData
-from ..constants import POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER, PROBE_VISION_RADIUS
+from ..constants import POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER, PROBE_VISION_RADIUS, UNIT_STATS, FACILITY_POPULATION_COST
+from ..map_gen import generate_territory
+
+TICK_HOURS = 2
+_CONFIRMATION_WINDOW = timedelta(hours=TICK_HOURS * 2)  # 2 ticks = 4 hours
+
+
+def _nations_at_war(db, nation_a_id: int, nation_b_id: int) -> bool:
+    a, b = min(nation_a_id, nation_b_id), max(nation_a_id, nation_b_id)
+    return db.query(Diplomacy).filter(
+        Diplomacy.nation_a == a,
+        Diplomacy.nation_b == b,
+        Diplomacy.status == "war",
+    ).first() is not None
+
+
+def _send_fleet_home(db, fleet: Fleet, now: datetime) -> None:
+    """Reverse a fleet's route so it travels back to its launch origin."""
+    home = db.get(Territory, fleet.origin_territory)
+    current = db.get(Territory, fleet.destination_territory)
+    if not home or not current:
+        return
+    hq, hr = _parse_key(home.node_key)
+    cq, cr = _parse_key(current.node_key)
+    distance = _hex_dist(cq, cr, hq, hr)
+    transit_ticks = ceil(distance / UNIT_STATS["starfighter"]["nodes_per_tick"])
+    fleet.status = "in_transit"
+    fleet.origin_territory = current.id
+    fleet.destination_territory = home.id
+    fleet.departs_at = now
+    fleet.arrives_at = now + timedelta(hours=transit_ticks * TICK_HOURS)
+    fleet.confirmation_expires_at = None
 
 
 def _parse_key(key: str):
@@ -58,6 +91,29 @@ def run_tick():
                 elif ftype == "refinery":
                     fuel_delta += round(2 * float(fuel_richness))
 
+            # 500 currency per colonized territory that has at least one mine or refinery
+            income_territory_count = (
+                db.query(Territory.id)
+                .join(Infrastructure, Territory.id == Infrastructure.territory_id)
+                .filter(
+                    Territory.nation_id == nation.id,
+                    Territory.is_colonized == True,
+                    Infrastructure.type.in_(["mine", "refinery"]),
+                )
+                .distinct()
+                .count()
+            )
+            currency_delta = 500 * income_territory_count
+
+            # Upkeep: 1 currency per assigned population, 2 currency per fighter
+            pop_upkeep = sum(FACILITY_POPULATION_COST.get(ftype, 0) for ftype, _, _ in facilities)
+            fighter_upkeep = (
+                db.query(sqlfunc.coalesce(sqlfunc.sum(Fleet.unit_count), 0))
+                .filter(Fleet.nation_id == nation.id)
+                .scalar()
+            )
+            currency_delta -= pop_upkeep + (fighter_upkeep * 2)
+
             # Grow population in each territory (5% per tick, capped by richness)
             pop_rows = (
                 db.query(TerritoryPopulation, Territory.mineral_richness, Territory.fuel_richness)
@@ -74,15 +130,17 @@ def run_tick():
                     population_delta += growth
                     pop.last_updated = tick_at
 
-            if minerals_delta or fuel_delta or population_delta:
+            if minerals_delta or fuel_delta or population_delta or currency_delta:
                 nation.minerals += minerals_delta
                 nation.fuel += fuel_delta
+                nation.currency += currency_delta
                 db.add(ResourceLog(
                     nation_id=nation.id,
                     tick_at=tick_at,
                     minerals_delta=minerals_delta,
                     fuel_delta=fuel_delta,
                     population_delta=population_delta,
+                    currency_delta=currency_delta,
                 ))
 
         # Land in-transit fleets that have arrived
@@ -92,25 +150,113 @@ def run_tick():
             .all()
         )
         for fleet in arrived_fleets:
-            dest_id = fleet.destination_territory
-            existing = (
-                db.query(Fleet)
-                .filter(
-                    Fleet.nation_id == fleet.nation_id,
-                    Fleet.origin_territory == dest_id,
-                    Fleet.status == "stationed",
-                )
-                .first()
+            dest = db.get(Territory, fleet.destination_territory)
+            if not dest:
+                continue
+
+            dest_id = dest.id
+            is_enemy_territory = (
+                dest.nation_id is not None
+                and dest.nation_id != fleet.nation_id
+                and _nations_at_war(db, fleet.nation_id, dest.nation_id)
             )
-            if existing:
-                existing.unit_count += fleet.unit_count
-                db.delete(fleet)
+
+            if is_enemy_territory:
+                fleet.status = "pending_confirmation"
+                fleet.confirmation_expires_at = tick_at + _CONFIRMATION_WINDOW
+                db.add(Event(
+                    type="fleet_arrived_at_enemy_territory",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "attacker_nation_id": fleet.nation_id,
+                        "defender_nation_id": dest.nation_id,
+                        "territory_id": dest_id,
+                        "node_key": dest.node_key,
+                        "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
+                db.add(Event(
+                    type="enemy_fleet_arrived",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "attacker_nation_id": fleet.nation_id,
+                        "defender_nation_id": dest.nation_id,
+                        "territory_id": dest_id,
+                        "node_key": dest.node_key,
+                        "unit_count": fleet.unit_count,
+                        "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
             else:
-                fleet.status = "stationed"
-                fleet.origin_territory = dest_id
-                fleet.destination_territory = None
-                fleet.arrives_at = None
-                fleet.departs_at = None
+                existing = (
+                    db.query(Fleet)
+                    .filter(
+                        Fleet.nation_id == fleet.nation_id,
+                        Fleet.origin_territory == dest_id,
+                        Fleet.status == "stationed",
+                    )
+                    .first()
+                )
+                if existing:
+                    existing.unit_count += fleet.unit_count
+                    db.delete(fleet)
+                else:
+                    fleet.status = "stationed"
+                    fleet.origin_territory = dest_id
+                    fleet.destination_territory = None
+                    fleet.arrives_at = None
+                    fleet.departs_at = None
+
+        # Process expired confirmation windows
+        expired_confirmation = (
+            db.query(Fleet)
+            .filter(
+                Fleet.status == "pending_confirmation",
+                Fleet.confirmation_expires_at <= tick_at,
+            )
+            .all()
+        )
+        for fleet in expired_confirmation:
+            if fleet.standing_order == "recall":
+                enemy_territory_id = fleet.destination_territory
+                home_territory_id = fleet.origin_territory
+                _send_fleet_home(db, fleet, tick_at)
+                db.add(Event(
+                    type="fleet_recalled_on_expiry",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "nation_id": fleet.nation_id,
+                        "from_territory_id": enemy_territory_id,
+                        "to_territory_id": home_territory_id,
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
+            else:
+                fleet.status = "holding"
+                fleet.confirmation_expires_at = None
+                db.add(Event(
+                    type="fleet_holding_at_enemy_territory",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "nation_id": fleet.nation_id,
+                        "territory_id": fleet.destination_territory,
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
 
         # Land in-transit colony ships that have arrived
         arrived_colony_ships = (
@@ -139,6 +285,45 @@ def run_tick():
             if not current_t:
                 continue
 
+            # Destroy probes that have entered enemy territory during war
+            if current_t.nation_id and current_t.nation_id != probe.nation_id:
+                a = min(probe.nation_id, current_t.nation_id)
+                b = max(probe.nation_id, current_t.nation_id)
+                war_row = db.query(Diplomacy).filter(
+                    Diplomacy.nation_a == a,
+                    Diplomacy.nation_b == b,
+                    Diplomacy.status == "war",
+                ).first()
+                if war_row:
+                    probe.status = "destroyed"
+                    db.add(Event(
+                        type="probe_destroyed_in_enemy_territory",
+                        payload={
+                            "probe_id": probe.id,
+                            "probe_nation_id": probe.nation_id,
+                            "territory_id": current_t.id,
+                            "territory_nation_id": current_t.nation_id,
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+                    db.add(Event(
+                        type="enemy_probe_detected_and_destroyed",
+                        payload={
+                            "probe_id": probe.id,
+                            "probe_nation_id": probe.nation_id,
+                            "territory_id": current_t.id,
+                            "territory_nation_id": current_t.nation_id,
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+                    continue
+
             if probe.status == "in_transit":
                 dest_t = db.get(Territory, probe.destination_territory)
                 if dest_t and current_t.id != dest_t.id:
@@ -158,11 +343,29 @@ def run_tick():
                     probe.departs_at = None
 
             scan_q, scan_r = _parse_key(current_t.node_key)
-            for t in all_territories:
-                if t.territory_type == "void":
-                    continue
-                tq, tr = _parse_key(t.node_key)
-                if _hex_dist(scan_q, scan_r, tq, tr) <= PROBE_VISION_RADIUS:
+
+            # Generate any uncharted territories within probe vision radius
+            for dq in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
+                for dr in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
+                    if _hex_dist(0, 0, dq, dr) > PROBE_VISION_RADIUS:
+                        continue
+                    vq, vr = scan_q + dq, scan_r + dr
+                    vkey = f"{vq},{vr}"
+                    if vkey not in territory_by_key:
+                        new_t = generate_territory(vq, vr)
+                        db.add(new_t)
+                        db.flush()
+                        territory_by_key[vkey] = new_t
+
+            # Record ProbeData for non-void territories in vision radius
+            for dq in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
+                for dr in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
+                    if _hex_dist(0, 0, dq, dr) > PROBE_VISION_RADIUS:
+                        continue
+                    vq, vr = scan_q + dq, scan_r + dr
+                    t = territory_by_key.get(f"{vq},{vr}")
+                    if not t or t.territory_type == "void":
+                        continue
                     existing = db.query(ProbeData).filter(
                         ProbeData.territory_id == t.id,
                         ProbeData.discovered_by == probe.nation_id,

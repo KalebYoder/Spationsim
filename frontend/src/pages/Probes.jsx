@@ -405,18 +405,24 @@ export default function Probes() {
       <SectionLabel>Your Intelligence</SectionLabel>
       <Card style={{ padding: 0 }}>
         {probeData.length === 0 ? (
-          <Table headers={['System', 'Minerals', 'Fuel', 'Scouted', 'Status']}>
+          <Table headers={['Planet', 'Coordinates', 'Minerals', 'Fuel', 'Scouted', 'Status']}>
             <Tr>
-              <Td colSpan={5} style={{ textAlign: 'center', padding: '40px 0' }}>
+              <Td colSpan={6} style={{ textAlign: 'center', padding: '40px 0' }}>
                 <EmptyState title="No probe data yet" body="Data collected by your probes will appear here." />
               </Td>
             </Tr>
           </Table>
         ) : (
-          <Table headers={['System', 'Minerals', 'Fuel', 'Scouted', 'Status']}>
+          <Table headers={['Planet', 'Coordinates', 'Minerals', 'Fuel', 'Scouted', 'Status']}>
             {probeData.map(pd => (
               <Tr key={pd.id}>
-                <Td>{pd.territory_name || pd.node_key}</Td>
+                <Td>
+                  {pd.territory_name
+                    ? pd.territory_name
+                    : <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Unnamed</span>
+                  }
+                </Td>
+                <Td muted style={{ fontFamily: 'monospace', fontSize: 12 }}>{pd.node_key}</Td>
                 <Td muted>{Number(pd.mineral_richness).toFixed(2)}</Td>
                 <Td muted>{Number(pd.fuel_richness).toFixed(2)}</Td>
                 <Td muted>{fmtAgo(pd.discovered_at)}</Td>

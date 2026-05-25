@@ -1,3 +1,4 @@
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..db.database import get_db
@@ -6,6 +7,8 @@ from ..models.nation import Nation
 from ..models.player import Player
 from ..schemas.nation import TerritoryResponse, TerritoryMapResponse, TerritoryRenameRequest
 from ..routers.auth import get_current_player
+
+RENAME_COOLDOWN_HOURS = 24  # 12 ticks × 2 h/tick
 
 router = APIRouter(prefix="/api/territories", tags=["territories"])
 
@@ -56,7 +59,20 @@ def rename_territory(
     nation = db.query(Nation).filter(Nation.player_id == player.id).first()
     if not nation or territory.nation_id != nation.id:
         raise HTTPException(status_code=403, detail="You do not control this territory")
+    if territory.last_renamed_at is not None:
+        now = datetime.now(timezone.utc)
+        earliest_next = territory.last_renamed_at + timedelta(hours=RENAME_COOLDOWN_HOURS)
+        if now < earliest_next:
+            remaining = earliest_next - now
+            total_minutes = int(remaining.total_seconds() / 60)
+            hours, minutes = divmod(total_minutes, 60)
+            raise HTTPException(
+                status_code=409,
+                detail=f"Territories can only be renamed once every {RENAME_COOLDOWN_HOURS} hours. "
+                       f"You can rename again in {hours}h {minutes}m",
+            )
     territory.name = body.name
+    territory.last_renamed_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(territory)
     return territory

@@ -1,5 +1,5 @@
 """
-Territory seeder. Builds three resource clusters connected by void corridors.
+Territory seeder. Builds three resource clusters surrounded by void rings.
 Usage: docker compose exec backend python -m app.seed [--force]
 """
 import random
@@ -7,17 +7,16 @@ import sys
 from sqlalchemy import text
 from .db.database import SessionLocal
 from .models.territory import Territory
+from .map_gen import (
+    CLUSTER_CENTERS,
+    CLUSTER_RADIUS,
+    CLUSTER_VOID_RING,
+    classify_hex,
+    generate_territory,
+    _hex_dist,
+)
 
 RANDOM_SEED = 42
-CLUSTER_RADIUS = 7
-CORRIDOR_WIDTH = 2
-CORRIDOR_STEPS = 30
-
-CLUSTER_CENTERS = [
-    (0,   -16),   # north
-    (14,   8),    # south-east
-    (-14,  8),    # south-west
-]
 
 
 def hex_disk(cq, cr, radius):
@@ -29,16 +28,8 @@ def hex_disk(cq, cr, radius):
     return result
 
 
-def hex_line_points(aq, ar, bq, br, steps):
-    points = []
-    for i in range(steps + 1):
-        t = i / steps
-        points.append((round(aq + (bq - aq) * t), round(ar + (br - ar) * t)))
-    return points
-
-
 def seed_territories(force=False) -> int:
-    random.seed(RANDOM_SEED)
+    rng = random.Random(RANDOM_SEED)
     db = SessionLocal()
     try:
         existing = db.query(Territory).count()
@@ -57,57 +48,43 @@ def seed_territories(force=False) -> int:
             db.execute(text("DELETE FROM territories"))
             db.commit()
 
-        # --- Build normal cluster nodes ---
-        cluster_nodes = {}  # (q,r) -> distance_from_cluster_center
-        for (cq, cr) in CLUSTER_CENTERS:
-            for (q, r) in hex_disk(cq, cr, CLUSTER_RADIUS):
-                dist = max(abs(q - cq), abs(r - cr), abs((q - cq) + (r - cr)))
-                if (q, r) not in cluster_nodes or dist < cluster_nodes[(q, r)]:
-                    cluster_nodes[(q, r)] = dist
-
-        # --- Build void corridor nodes ---
-        void_nodes = set()
-        pairs = [
-            (CLUSTER_CENTERS[0], CLUSTER_CENTERS[1]),
-            (CLUSTER_CENTERS[1], CLUSTER_CENTERS[2]),
-            (CLUSTER_CENTERS[0], CLUSTER_CENTERS[2]),
-        ]
-        for (aq, ar), (bq, br) in pairs:
-            for (lq, lr) in hex_line_points(aq, ar, bq, br, CORRIDOR_STEPS):
-                for (q, r) in hex_disk(lq, lr, CORRIDOR_WIDTH):
-                    if (q, r) not in cluster_nodes:
-                        void_nodes.add((q, r))
-
-        # --- Assemble territories ---
+        # Collect all hexes to generate: cluster nodes + void ring around each cluster
+        seen: set[tuple[int, int]] = set()
         territories = []
 
-        for (q, r), local_dist in cluster_nodes.items():
-            base = max(0.5, 4.0 - local_dist * 0.45)
-            mineral_richness = round(min(4.0, max(0.10, base + random.uniform(-0.4, 0.4))), 2)
-            fuel_richness    = round(min(4.0, max(0.10, base + random.uniform(-0.4, 0.4))), 2)
-            territories.append(Territory(
-                node_key=f"{q},{r}",
-                territory_type='normal',
-                mineral_richness=mineral_richness,
-                fuel_richness=fuel_richness,
-                distance_from_center=local_dist,
-            ))
+        # Cluster nodes (normal, richness 1-5 weighted)
+        for cq, cr in CLUSTER_CENTERS:
+            for q, r in hex_disk(cq, cr, CLUSTER_RADIUS):
+                if (q, r) in seen:
+                    continue
+                seen.add((q, r))
+                t = generate_territory(q, r, rng)
+                territories.append(t)
 
-        for (q, r) in void_nodes:
-            territories.append(Territory(
-                node_key=f"{q},{r}",
-                territory_type='void',
-                mineral_richness=0.0,
-                fuel_richness=0.0,
-                distance_from_center=CLUSTER_RADIUS + 1,
-            ))
+        # Void ring around each cluster (CLUSTER_RADIUS+1 to CLUSTER_RADIUS+CLUSTER_VOID_RING)
+        for cq, cr in CLUSTER_CENTERS:
+            for q, r in hex_disk(cq, cr, CLUSTER_RADIUS + CLUSTER_VOID_RING):
+                if (q, r) in seen:
+                    continue
+                # Only include hexes in the void ring (outside cluster radius)
+                t_type, _ = classify_hex(q, r)
+                if t_type != "void":
+                    # Another cluster claimed this hex as normal — skip (already handled above)
+                    continue
+                seen.add((q, r))
+                t = generate_territory(q, r, rng)
+                territories.append(t)
 
         db.bulk_save_objects(territories)
         db.commit()
 
-        normal_count = len(cluster_nodes)
-        void_count = len(void_nodes)
-        print(f"Seeded {len(territories)} territories ({normal_count} normal, {void_count} void).")
+        normal_count = sum(1 for t in territories if t.territory_type == "normal")
+        void_count = sum(1 for t in territories if t.territory_type == "void")
+        anomaly_count = sum(1 for t in territories if t.territory_type == "anomaly")
+        print(
+            f"Seeded {len(territories)} territories "
+            f"({normal_count} normal, {void_count} void, {anomaly_count} anomaly)."
+        )
         return len(territories)
     finally:
         db.close()
