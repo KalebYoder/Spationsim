@@ -45,3 +45,6 @@ FACILITY_COSTS = {
     "shipyard":      {"minerals": 50, "fuel":  20},
     "probe_factory": {"minerals": 10, "fuel":   5},
 }
+
+PROBE_RANGE = 10           # max nodes from nearest owned colony
+PROBE_VISION_RADIUS = 2    # nodes revealed around probe each tick

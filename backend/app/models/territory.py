@@ -32,6 +32,8 @@ class Territory(Base):
                                             foreign_keys="ColonyShip.destination_territory")
     probes_origin = relationship("Probe", back_populates="origin_territory_rel",
                                  foreign_keys="Probe.origin_territory")
+    probes_current = relationship("Probe", back_populates="current_territory_rel",
+                                  foreign_keys="Probe.current_territory")
     probes_destination = relationship("Probe", back_populates="destination_territory_rel",
                                       foreign_keys="Probe.destination_territory")
 

@@ -240,3 +240,33 @@ class TerritoryMapResponse(BaseModel):
     fuel_richness: float
 
     model_config = {"from_attributes": True}
+
+
+class DispatchProbeRequest(BaseModel):
+    from_territory_id: int
+    to_territory_id: int
+
+
+class ProbeResponse(BaseModel):
+    id: int
+    status: str
+    origin_node_key: str | None
+    origin_name: str | None
+    current_node_key: str | None
+    destination_node_key: str | None
+    destination_name: str | None
+    arrives_at: str | None
+    departs_at: str | None
+
+
+class ProbeDataResponse(BaseModel):
+    id: int
+    territory_id: int
+    node_key: str
+    territory_name: str | None
+    mineral_richness: float
+    fuel_richness: float
+    discovered_at: str
+    is_colonized: bool
+    nation_id: int | None
+    nation_name: str | None

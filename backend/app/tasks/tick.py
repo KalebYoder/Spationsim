@@ -10,7 +10,24 @@ from ..models.territory import Territory
 from ..models.resource_log import ResourceLog
 from ..models.event import Event
 from ..models.territory_population import TerritoryPopulation
-from ..constants import POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER
+from ..models.probe import Probe
+from ..models.probe_data import ProbeData
+from ..constants import POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER, PROBE_VISION_RADIUS
+
+
+def _parse_key(key: str):
+    q, r = key.split(",")
+    return int(q), int(r)
+
+
+def _hex_dist(q1, r1, q2, r2):
+    dq, dr = q2 - q1, r2 - r1
+    return max(abs(dq), abs(dr), abs(dq + dr))
+
+
+def _next_step(cq, cr, dq, dr):
+    neighbors = [(cq+1, cr), (cq-1, cr), (cq, cr+1), (cq, cr-1), (cq+1, cr-1), (cq-1, cr+1)]
+    return min(neighbors, key=lambda nb: _hex_dist(nb[0], nb[1], dq, dr))
 
 
 @celery_app.task(name="app.tasks.tick.run_tick")
@@ -107,6 +124,60 @@ def run_tick():
             ship.destination_territory = None
             ship.arrives_at = None
             ship.departs_at = None
+
+        # Build territory lookup for probe movement
+        all_territories = db.query(Territory).all()
+        territory_by_key = {t.node_key: t for t in all_territories}
+
+        active_probes = (
+            db.query(Probe)
+            .filter(Probe.status.in_(["in_transit", "stationed"]))
+            .all()
+        )
+        for probe in active_probes:
+            current_t = db.get(Territory, probe.current_territory) if probe.current_territory else None
+            if not current_t:
+                continue
+
+            if probe.status == "in_transit":
+                dest_t = db.get(Territory, probe.destination_territory)
+                if dest_t and current_t.id != dest_t.id:
+                    cq, cr = _parse_key(current_t.node_key)
+                    dq, dr = _parse_key(dest_t.node_key)
+                    nq, nr = _next_step(cq, cr, dq, dr)
+                    next_key = f"{nq},{nr}"
+                    next_t = territory_by_key.get(next_key)
+                    if next_t:
+                        probe.current_territory = next_t.id
+                        current_t = next_t
+                if dest_t and current_t.id == dest_t.id:
+                    probe.status = "stationed"
+                    probe.origin_territory = current_t.id
+                    probe.destination_territory = None
+                    probe.arrives_at = None
+                    probe.departs_at = None
+
+            scan_q, scan_r = _parse_key(current_t.node_key)
+            for t in all_territories:
+                if t.territory_type == "void":
+                    continue
+                tq, tr = _parse_key(t.node_key)
+                if _hex_dist(scan_q, scan_r, tq, tr) <= PROBE_VISION_RADIUS:
+                    existing = db.query(ProbeData).filter(
+                        ProbeData.territory_id == t.id,
+                        ProbeData.discovered_by == probe.nation_id,
+                    ).first()
+                    if existing:
+                        existing.mineral_richness = t.mineral_richness
+                        existing.fuel_richness = t.fuel_richness
+                        existing.discovered_at = tick_at
+                    else:
+                        db.add(ProbeData(
+                            territory_id=t.id,
+                            discovered_by=probe.nation_id,
+                            mineral_richness=t.mineral_richness,
+                            fuel_richness=t.fuel_richness,
+                        ))
 
         db.add(Event(
             type="tick",

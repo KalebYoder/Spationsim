@@ -1,15 +1,48 @@
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.infrastructure import Infrastructure
 from ..models.nation import Nation
+from ..models.probe import Probe
+from ..models.probe_data import ProbeData
 from ..models.territory import Territory
 from ..models.player import Player
-from ..schemas.nation import ManufactureRequest, NationResponse, ProbeStatsResponse
+from ..schemas.nation import (
+    ManufactureRequest, NationResponse, ProbeStatsResponse,
+    DispatchProbeRequest, ProbeResponse, ProbeDataResponse,
+)
 from ..routers.auth import get_current_player
-from ..constants import PROBE_STATS
+from ..constants import PROBE_STATS, PROBE_RANGE
 
 router = APIRouter(prefix="/api/probes", tags=["probes"])
+
+
+def _parse_key(key: str):
+    q, r = key.split(",")
+    return int(q), int(r)
+
+
+def _hex_dist(q1, r1, q2, r2):
+    dq, dr = q2 - q1, r2 - r1
+    return max(abs(dq), abs(dr), abs(dq + dr))
+
+
+def _probe_response(probe: Probe, db: Session) -> ProbeResponse:
+    origin_t = db.get(Territory, probe.origin_territory) if probe.origin_territory else None
+    current_t = db.get(Territory, probe.current_territory) if probe.current_territory else None
+    dest_t = db.get(Territory, probe.destination_territory) if probe.destination_territory else None
+    return ProbeResponse(
+        id=probe.id,
+        status=probe.status,
+        origin_node_key=origin_t.node_key if origin_t else None,
+        origin_name=origin_t.name if origin_t else None,
+        current_node_key=current_t.node_key if current_t else None,
+        destination_node_key=dest_t.node_key if dest_t else None,
+        destination_name=dest_t.name if dest_t else None,
+        arrives_at=probe.arrives_at.isoformat() if probe.arrives_at else None,
+        departs_at=probe.departs_at.isoformat() if probe.departs_at else None,
+    )
 
 
 @router.get("/stats", response_model=ProbeStatsResponse)
@@ -60,3 +93,131 @@ def manufacture_probes(
     db.commit()
     db.refresh(nation)
     return nation
+
+
+@router.get("/active", response_model=list[ProbeResponse])
+def get_active_probes(
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    probes = (
+        db.query(Probe)
+        .filter(
+            Probe.nation_id == nation.id,
+            Probe.status.in_(["in_transit", "stationed"]),
+        )
+        .all()
+    )
+    return [_probe_response(p, db) for p in probes]
+
+
+@router.post("/dispatch", response_model=ProbeResponse)
+def dispatch_probe(
+    body: DispatchProbeRequest,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    if nation.probes_reserve < 1:
+        raise HTTPException(status_code=409, detail="No probes in reserve")
+
+    from_t = db.get(Territory, body.from_territory_id)
+    if not from_t or from_t.nation_id != nation.id or not from_t.is_colonized:
+        raise HTTPException(status_code=409, detail="Origin must be an owned, colonized territory")
+    if from_t.territory_type == "void":
+        raise HTTPException(status_code=409, detail="Cannot launch from void territory")
+
+    to_t = db.get(Territory, body.to_territory_id)
+    if not to_t:
+        raise HTTPException(status_code=404, detail="Destination territory not found")
+    if to_t.territory_type == "void":
+        raise HTTPException(status_code=409, detail="Cannot probe void territory")
+
+    owned_territories = (
+        db.query(Territory)
+        .filter(Territory.nation_id == nation.id, Territory.is_colonized == True)
+        .all()
+    )
+
+    dq, dr = _parse_key(to_t.node_key)
+    min_dist = min(
+        _hex_dist(*_parse_key(ot.node_key), dq, dr)
+        for ot in owned_territories
+    )
+    if min_dist > PROBE_RANGE:
+        raise HTTPException(status_code=409, detail="Destination is out of probe range")
+
+    now = datetime.now(timezone.utc)
+    fq, fr = _parse_key(from_t.node_key)
+    distance = _hex_dist(fq, fr, dq, dr)
+
+    nation.probes_reserve -= 1
+
+    if distance == 0:
+        probe = Probe(
+            nation_id=nation.id,
+            origin_territory=from_t.id,
+            current_territory=from_t.id,
+            destination_territory=None,
+            status="stationed",
+            departs_at=now,
+            arrives_at=None,
+        )
+    else:
+        arrives_at = now + timedelta(hours=2 * distance)
+        probe = Probe(
+            nation_id=nation.id,
+            origin_territory=from_t.id,
+            current_territory=from_t.id,
+            destination_territory=to_t.id,
+            status="in_transit",
+            departs_at=now,
+            arrives_at=arrives_at,
+        )
+
+    db.add(probe)
+    db.commit()
+    db.refresh(probe)
+    return _probe_response(probe, db)
+
+
+@router.get("/data", response_model=list[ProbeDataResponse])
+def get_probe_data(
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    rows = (
+        db.query(ProbeData, Territory, Nation)
+        .join(Territory, ProbeData.territory_id == Territory.id)
+        .outerjoin(Nation, Territory.nation_id == Nation.id)
+        .filter(ProbeData.discovered_by == nation.id)
+        .order_by(ProbeData.discovered_at.desc())
+        .all()
+    )
+
+    result = []
+    for pd, t, n in rows:
+        result.append(ProbeDataResponse(
+            id=pd.id,
+            territory_id=t.id,
+            node_key=t.node_key,
+            territory_name=t.name,
+            mineral_richness=float(pd.mineral_richness),
+            fuel_richness=float(pd.fuel_richness),
+            discovered_at=pd.discovered_at.isoformat(),
+            is_colonized=t.is_colonized,
+            nation_id=n.id if n else None,
+            nation_name=n.name if n else None,
+        ))
+    return result
