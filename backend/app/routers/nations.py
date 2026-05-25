@@ -7,6 +7,7 @@ from ..models.territory import Territory
 from ..models.territory_population import TerritoryPopulation
 from ..models.player import Player
 from ..schemas.nation import NationCreateRequest, NationResponse, TerritoryResponse
+from ..schemas.messaging import NationListItem
 from ..routers.auth import get_current_player
 from ..constants import POPULATION_START
 
@@ -14,6 +15,14 @@ VACATION_MIN_HOURS = 48
 LOCKOUT_HOURS = 48
 
 router = APIRouter(prefix="/api/nations", tags=["nations"])
+
+
+@router.get("", response_model=list[NationListItem])
+def list_nations(
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    return db.query(Nation).order_by(Nation.name).all()
 
 
 @router.post("", response_model=NationResponse, status_code=201)

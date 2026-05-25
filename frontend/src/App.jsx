@@ -13,6 +13,7 @@ import Probes from './pages/Probes'
 import Planets from './pages/Planets'
 import MapView from './pages/MapView'
 import Diplomacy from './pages/Diplomacy'
+import Mail from './pages/Mail'
 
 function NationGate({ children }) {
   const { player } = useAuth()
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="/planets"    element={<Planets />} />
           <Route path="/map"        element={<MapView />} />
           <Route path="/diplomacy"  element={<Diplomacy />} />
+          <Route path="/mail"       element={<Mail />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

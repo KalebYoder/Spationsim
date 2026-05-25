@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .db.database import Base, engine
-from .routers import auth, nations, territories, facilities, military, probes, economy
+from .routers import auth, nations, territories, facilities, military, probes, economy, chat, mail
 from . import models  # noqa: F401 - registers all ORM models with Base.metadata
 
 Base.metadata.create_all(bind=engine)
@@ -23,6 +23,8 @@ app.include_router(facilities.router)
 app.include_router(military.router)
 app.include_router(probes.router)
 app.include_router(economy.router)
+app.include_router(chat.router)
+app.include_router(mail.router)
 
 
 @app.get("/api/health")

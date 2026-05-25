@@ -10,6 +10,8 @@ from .colony_ship import ColonyShip
 from .probe import Probe
 from .event import Event
 from .resource_log import ResourceLog
+from .chat_message import ChatMessage
+from .mail_message import MailMessage
 
 __all__ = [
     "Player",
@@ -25,4 +27,6 @@ __all__ = [
     "Probe",
     "Event",
     "ResourceLog",
+    "ChatMessage",
+    "MailMessage",
 ]
