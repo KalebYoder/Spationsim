@@ -53,7 +53,7 @@ def get_current_player(
 
 @router.post("/register", response_model=PlayerResponse, status_code=201)
 def register(body: RegisterRequest, response: Response, db: Session = Depends(get_db)):
-    if db.query(Player).filter(Player.username == body.username).first():
+    if db.query(Player).filter(Player.username.ilike(body.username)).first():
         raise HTTPException(status_code=409, detail="Username already taken")
     if db.query(Player).filter(Player.email == body.email).first():
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -73,7 +73,7 @@ def register(body: RegisterRequest, response: Response, db: Session = Depends(ge
 
 @router.post("/login", response_model=PlayerResponse)
 def login(body: LoginRequest, response: Response, db: Session = Depends(get_db)):
-    player = db.query(Player).filter(Player.username == body.username).first()
+    player = db.query(Player).filter(Player.username.ilike(body.username)).first()
     if not player or not verify_password(body.password, player.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     if not player.is_active:

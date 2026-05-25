@@ -184,7 +184,7 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ### Missing Standard Features
 
-1. **No player-to-player interaction** — No trade, messaging, or war declaration. Need at least one social mechanism for beta; even resource gifting suffices.
+1. **No player-to-player interaction** — *(Partially fixed)* Chat (public channels + DMs) and mail system implemented. Trade and war declaration still pending.
 
 2. **No tick event log** — Players have a countdown but no record of what changed last tick. Standard: event log or last-tick summary showing production, population delta, probe arrivals.
 
@@ -223,9 +223,9 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 - [x] Probe mechanic (manufacture at probe factory, reserve system)
 - [x] Colony ship mechanic (build at shipyard, population transport, load/unload)
 - [x] Territory claiming (stationed fleet claims unclaimed territory; no population until colony ship unloads)
-- [ ] Probe dispatch and travel
-- [ ] Probe range limits (distance from nearest colony)
-- [ ] Probe detection by territory owners
+- [x] Probe dispatch and travel
+- [x] Probe range limits (distance from nearest colony)
+- [x] Probe detection by territory owners (vision scanning — owner notified on transit)
 - [ ] Probe data storage (private to player) and UI report view
 - [ ] Information selling between players
 
@@ -242,7 +242,7 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 - [ ] Direct resource trading
 - [ ] Probe data marketplace
 - [ ] Diplomatic status flags
-- [ ] Basic player messaging
+- [x] Basic player messaging (chat: public channels + DMs with auto-tab on incoming message; mail: inbox/outbox/delete)
 
 ### Phase 6 — Alpha Test
 - [ ] Invite veteran player testers (closed)
@@ -303,4 +303,4 @@ These are written to `.env` (git-ignored). To rotate: update `.env` and restart 
 
 ---
 
-*Last updated: Phases 1–2 complete, Phase 3 partial (colony ships + claiming done; probe dispatch/detection/data pending), Phase 4 partial (fleet movement + vacation mode done; war declaration + combat resolution pending)*
+*Last updated: Phases 1–2 complete, Phase 3 partial (probe dispatch/travel/range/detection done; probe data UI and info selling pending), Phase 4 partial (fleet movement + vacation mode done; war declaration + combat resolution pending), Phase 5 partial (chat + mail done; trading + marketplace + diplomacy flags pending)*

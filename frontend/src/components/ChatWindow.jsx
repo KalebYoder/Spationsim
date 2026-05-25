@@ -90,10 +90,34 @@ export default function ChatWindow() {
           }
         } catch {}
       }
+
+      // Auto-open tabs for incoming DMs
+      try {
+        const dmR = await fetch('/api/chat/dm-channels', { credentials: 'include' })
+        if (dmR.ok) {
+          const discovered = await dmR.json()
+          const openSet = new Set(openDmTabsRef.current.map(t => t.channel))
+          const newTabs = discovered
+            .filter(dm => !openSet.has(dm.channel))
+            .map(dm => ({
+              channel: dm.channel,
+              otherNationId: dm.other_nation_id,
+              otherNationName: dm.other_nation_name,
+            }))
+          if (newTabs.length > 0) {
+            setOpenDmTabs(prev => [...prev, ...newTabs])
+            for (const tab of newTabs) {
+              await loadChannel(tab.channel)
+              const count = messagesRef.current[tab.channel]?.length ?? 0
+              if (count > 0) setUnread(prev => ({ ...prev, [tab.channel]: count }))
+            }
+          }
+        }
+      } catch {}
     }
     const id = setInterval(poll, 4000)
     return () => clearInterval(id)
-  }, [expanded, myNation, openDmTabs, scrollToBottom])
+  }, [expanded, myNation, openDmTabs, scrollToBottom, loadChannel])
 
   const handleSend = async () => {
     const content = input.trim()
