@@ -44,7 +44,7 @@ def seed_territories(force=False) -> int:
             db.execute(text("DELETE FROM probe_data"))
             db.execute(text("UPDATE fleets SET origin_territory = NULL, destination_territory = NULL"))
             db.execute(text("UPDATE probes SET origin_territory = NULL, destination_territory = NULL"))
-            db.execute(text("UPDATE nations SET home_territory_id = NULL, minerals = 100, fuel = 100, starfighters = 0, probes_reserve = 0"))
+            db.execute(text("UPDATE nations SET home_territory_id = NULL, minerals = 100, fuel = 100, probes_reserve = 0"))
             db.execute(text("DELETE FROM territories"))
             db.commit()
 

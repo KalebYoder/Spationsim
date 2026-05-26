@@ -44,9 +44,8 @@ from app.core.security import create_access_token, hash_password
 # ---------------------------------------------------------------------------
 
 CURRENCY_PER_TERRITORY = 500
-MINE_UPKEEP = 10  # FACILITY_POPULATION_COST["mine"]
-# Net income per territory with exactly one mine: CURRENCY_PER_TERRITORY - MINE_UPKEEP
-NET_PER_INCOME_TERRITORY = CURRENCY_PER_TERRITORY - MINE_UPKEEP  # 490
+# Facilities have no currency upkeep; net per territory equals gross income
+NET_PER_INCOME_TERRITORY = CURRENCY_PER_TERRITORY  # 500
 
 
 # ---------------------------------------------------------------------------
@@ -316,12 +315,12 @@ class TestNationResponseCurrencyField:
 class TestTickCurrencyGeneration:
     """run_tick: currency is earned per colonized territory each tick."""
 
-    def test_one_income_territory_earns_net_490_currency_per_tick(
+    def test_one_income_territory_earns_500_currency_per_tick(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """Nation with 1 territory+mine: gross 500 income, 10 mine upkeep = 490 net per tick."""
+        """Nation with 1 territory+mine: 500 income per tick (no facility upkeep)."""
         _make_income_territory(db, test_nation.id, "0,0")
 
         _commit_and_run_tick(db)
@@ -341,7 +340,7 @@ class TestTickCurrencyGeneration:
         db: Session,
         test_nation: Nation,
     ):
-        """Nation with 3 territories+mines: 3×500 gross − 3×10 mine upkeep = 1470 net."""
+        """Nation with 3 territories+mines: 3×500 = 1500 income (no facility upkeep)."""
         _make_income_territory(db, test_nation.id, "0,0", distance_from_center=0)
         _make_income_territory(db, test_nation.id, "1,0", distance_from_center=1)
         _make_income_territory(db, test_nation.id, "2,0", distance_from_center=2)
@@ -385,7 +384,7 @@ class TestTickCurrencyGeneration:
         db: Session,
         test_nation: Nation,
     ):
-        """After 2 ticks with 1 income territory, currency must equal 2 × net (2 × 490 = 980)."""
+        """After 2 ticks with 1 income territory, currency must equal 2 × 500 = 1000."""
         _make_income_territory(db, test_nation.id, "0,0")
 
         _commit_and_run_tick(db)
@@ -417,7 +416,7 @@ class TestTickCurrencyGeneration:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            # 800 existing + 490 net (500 income − 10 mine upkeep) = 1290
+            # 800 existing + 500 income = 1300
             expected = 800 + NET_PER_INCOME_TERRITORY
             assert float(nation.currency) == float(expected), (
                 f"Tick must ADD {NET_PER_INCOME_TERRITORY} net to existing 800, expected {expected}, "
@@ -471,7 +470,7 @@ class TestTickCurrencyGeneration:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            # Only the 1 colonized territory with mine generates income; net = 490
+            # Only the 1 colonized territory with mine generates income; net = 500
             assert float(nation.currency) == float(NET_PER_INCOME_TERRITORY), (
                 f"Uncolonized territory must not add currency. Expected {NET_PER_INCOME_TERRITORY}, "
                 f"got {nation.currency!r}"
@@ -524,7 +523,7 @@ class TestTickCurrencyGeneration:
             nation = fresh.get(Nation, test_nation.id)
             expected = 2 * NET_PER_INCOME_TERRITORY
             assert float(nation.currency) == float(expected), (
-                f"2 mine territories net {expected} (2×490), got {nation.currency!r}"
+                f"2 mine territories net {expected} (2×500), got {nation.currency!r}"
             )
         finally:
             fresh.close()
@@ -607,7 +606,7 @@ class TestResourceLogCurrencyDelta:
                 ResourceLog.nation_id == test_nation.id,
             ).order_by(ResourceLog.id.desc()).first()
             assert log is not None
-            expected_delta = 2 * NET_PER_INCOME_TERRITORY  # 2 × 490 = 980
+            expected_delta = 2 * NET_PER_INCOME_TERRITORY  # 2 × 500 = 1000
             assert float(log.currency_delta) == float(expected_delta), (
                 f"ResourceLog.currency_delta for 2 mine territories must be {expected_delta}, "
                 f"got {log.currency_delta!r}"
@@ -728,7 +727,7 @@ class TestGetMineAfterTick:
         test_nation: Nation,
         test_player: Player,
     ):
-        """After a tick with 1 mine territory, GET /api/nations/mine returns 490 (net)."""
+        """After a tick with 1 mine territory, GET /api/nations/mine returns 500 (full income, no upkeep)."""
         _make_income_territory(db, test_nation.id, "0,0")
 
         _commit_and_run_tick(db)

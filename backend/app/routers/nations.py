@@ -1,12 +1,14 @@
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 from ..db.database import get_db
+from ..models.fleet import Fleet
 from ..models.nation import Nation
 from ..models.territory import Territory
 from ..models.territory_population import TerritoryPopulation
 from ..models.player import Player
-from ..schemas.nation import NationCreateRequest, NationResponse, TerritoryResponse
+from ..schemas.nation import NationCreateRequest, NationResponse, PublicNationResponse, TerritoryResponse
 from ..schemas.messaging import NationListItem
 from ..routers.auth import get_current_player
 from ..constants import POPULATION_START
@@ -81,7 +83,7 @@ def _nation_response(nation: Nation, player: Player) -> NationResponse:
         home_territory_id=nation.home_territory_id,
         minerals=float(nation.minerals),
         fuel=float(nation.fuel),
-        starfighters=nation.starfighters,
+        currency=float(nation.currency),
         probes_reserve=nation.probes_reserve,
         vacation_mode=player.vacation_mode,
         vacation_since=player.vacation_since.isoformat() if player.vacation_since else None,
@@ -154,3 +156,39 @@ def get_my_territories(
     if not nation:
         raise HTTPException(status_code=404, detail="No nation found")
     return db.query(Territory).filter(Territory.nation_id == nation.id).all()
+
+
+@router.get("/{nation_id}", response_model=PublicNationResponse)
+def get_nation_public(
+    nation_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.get(Nation, nation_id)
+    if not nation:
+        raise HTTPException(status_code=404, detail="Nation not found")
+
+    territory_count = (
+        db.query(Territory)
+        .filter(Territory.nation_id == nation_id, Territory.is_colonized == True)
+        .count()
+    )
+
+    starfighter_count = (
+        db.query(sqlfunc.coalesce(sqlfunc.sum(Fleet.unit_count), 0))
+        .filter(Fleet.nation_id == nation_id)
+        .scalar()
+    )
+
+    owner = db.get(Player, nation.player_id)
+
+    return PublicNationResponse(
+        id=nation.id,
+        name=nation.name,
+        flag_color=nation.flag_color,
+        currency_name=nation.currency_name,
+        territory_count=territory_count,
+        military={"starfighter": int(starfighter_count)},
+        vacation_mode=owner.vacation_mode if owner else False,
+        vacation_since=owner.vacation_since.isoformat() if owner and owner.vacation_since else None,
+    )

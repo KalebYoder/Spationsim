@@ -49,11 +49,24 @@ class NationResponse(BaseModel):
     home_territory_id: int | None
     minerals: float
     fuel: float
-    starfighters: int
+    currency: float
     probes_reserve: int
     vacation_mode: bool
     vacation_since: str | None
     aggression_lockout_until: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class PublicNationResponse(BaseModel):
+    id: int
+    name: str
+    flag_color: str
+    currency_name: str
+    territory_count: int
+    military: dict[str, int]
+    vacation_mode: bool
+    vacation_since: str | None
 
     model_config = {"from_attributes": True}
 
@@ -85,6 +98,7 @@ class SendFleetRequest(BaseModel):
     from_territory_id: int
     to_territory_id: int
     quantity: int
+    intent: str | None = None  # 'attack', 'bombard', or None
 
     @field_validator("quantity")
     @classmethod
@@ -98,6 +112,7 @@ class FleetResponse(BaseModel):
     id: int
     unit_count: int
     status: str
+    standing_order: str
     origin_territory_id: int | None
     origin_node_key: str | None
     origin_name: str | None
@@ -107,6 +122,7 @@ class FleetResponse(BaseModel):
     destination_node_key: str | None
     destination_name: str | None
     arrives_at: str | None
+    confirmation_expires_at: str | None
 
     model_config = {"from_attributes": True}
 
@@ -236,8 +252,8 @@ class TerritoryMapResponse(BaseModel):
     is_colonized: bool
     nation_id: int | None
     nation_name: str | None
-    mineral_richness: float
-    fuel_richness: float
+    mineral_richness: float | None
+    fuel_richness: float | None
 
     model_config = {"from_attributes": True}
 

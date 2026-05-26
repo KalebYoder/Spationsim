@@ -185,13 +185,23 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 6. **Vacation mode has no exit cooldown** — *(Fixed)* 48-hour minimum stay enforced on entry; 48-hour aggression lockout applied on exit (blocks fleet dispatch and vacation re-entry). See Decisions Log.
 
+### Balance Problems
+
+1. **Population growth rate is too fast** — At 5%/tick (every 2 hours), territories reach their richness-based population cap in roughly 3 days. Population becomes a non-constraint almost immediately, removing the primary strategic gate on facility construction and military buildup. Recommend 0.5–1%/tick maximum. Requires tuning against beta feedback before adjustment.
+
+2. **24:1 production gap between center and rim at game start** — A center territory (richness 5) with one mine/refinery produces `round(2×5) = 10` resources/tick. A rim territory (richness 1) produces 2. This creates a 5× per-facility gap before accounting for population. Early-game players starting rim are locked out of military participation for days while center players can build combat fleets within hours. Violates "rim is a viable permanent playstyle." Needs either a minimum richness floor, a rim production bonus, or production formula tuning.
+
+3. **Probe cost is negligible — information economy collapses in week one** — Probes cost 2 minerals + 1 fuel each. A single mine at richness 2 generates 4 minerals/tick, enough for 2 probes/tick indefinitely with no fleet upkeep. The entire map can be blanketed within the first week, eliminating the strategic value of probe data as a scarce commodity. Fix requires either a significant cost increase (10× or more) or a stationed-probe upkeep drain.
+
+4. **`holding` fleets have zero cost** — A fleet parked in `holding` status at an enemy territory burns no fuel, incurs no upkeep, and drains no defender resources. Players can park intimidation fleets in enemy space indefinitely at zero cost. This makes the confirmation window mechanic weightless — there is no pressure to act. Planned skirmish attrition (see Pre-Engagement Skirmishing section) will address this, but it is unimplemented.
+
 ### Missing Standard Features
 
 1. **No player-to-player interaction** — *(Partially fixed)* Chat (public channels + DMs) and mail system implemented. Trade and war declaration still pending.
 
 2. **No tick event log** — Players have a countdown but no record of what changed last tick. Standard: event log or last-tick summary showing production, population delta, probe arrivals.
 
-3. **No facility limits per territory** — No reason to hold more than one territory if facilities can stack infinitely at home. Needs a per-territory slot cap.
+3. **No facility limits per territory** — No reason to hold more than one territory if facilities can stack infinitely at home. A population-capped center territory can staff 50 mines and generate 500 minerals/tick from a single tile, outpacing any design intent. Needs a per-territory slot cap.
 
 4. **No military upkeep** — Units cost population to build but have zero ongoing cost. Players stockpile indefinitely with no decay loop. Fuel upkeep is the standard mechanism.
 
@@ -202,6 +212,16 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 7. **No per-territory base income** — *(Fixed)* Colonized territories with at least one mine or refinery generate 500 currency/tick (in addition to mineral/fuel output). Bare territories with no extraction facilities generate no currency income, keeping the strategic incentive to develop.
 
 8. **Territory renaming has no cooldown** — *(Fixed)* 24-hour (12-tick) cooldown enforced on rename. Attempting to rename again within the window returns a 409 with the exact remaining time.
+
+### Implementation Gaps (Technical)
+
+1. **`TerritoryPopulation.growth_rate` column is vestigial** — The column exists in the schema and is always written as `0`, but `run_tick` uses the global `POPULATION_GROWTH_RATE` constant, never reading the per-row value. The column implies per-territory configurability that does not exist. Will mislead any future code that reads it.
+
+2. **Probes can be silently stranded mid-transit** — If `_next_step()` resolves to a hex key not yet in the territories table, the probe stops moving silently: no event, no notification to the owner, no recovery mechanism. The tick simply skips it on every subsequent run. Affects probe paths through ungenerated space.
+
+3. **Colony ship reachability constraint not enforced** — The spec states colony ships must travel through owned or reachable space. The `send_colony_ship` endpoint calculates travel time based on distance but performs no adjacency or path check. A ship can be dispatched across the entire map to an isolated owned territory with no colonized space in between, bypassing the flanking/leapfrog constraint entirely.
+
+4. **Territory capture will produce no notification for the former owner** — The `territory_claimed` event payload only carries the claimant's `nation_id`. When conquest is implemented and an attacker takes an enemy territory, the previous owner will receive no event notification. Flag this when implementing conquest.
 
 ---
 
@@ -237,9 +257,9 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 - [x] Single unit type (starfighter: ATK 2, DEF 1, HP 5, 2 nodes/tick)
 - [x] Fleet movement (send, in-transit, arrival processing)
 - [x] Vacation mode (48h min stay, 48h aggression lockout on exit)
-- [ ] War declaration system
+- [x] War declaration system — `POST /api/diplomacy/war`; blocked against vacation-mode targets; 24-hour minimum war duration enforced on `DELETE /api/diplomacy/war/{id}`
 - [x] Confirmation window on fleet arrival — fleet enters `pending_confirmation` on arrival at enemy territory; 2-tick (4h) window; attacker can confirm or recall; expiry executes standing order (hold → `holding`, recall → auto-returns in transit); both events logged for each side
-- [ ] Basic combat resolution (triggered when attacker confirms via `POST /fleets/{id}/confirm-attack`; fleet enters `engaged` status pending resolution)
+- [x] Basic combat resolution — `engaged` fleets process each tick: combat rounds against stationed defender fleets (both sides take casualties via `max(1, round(count × attack/hp))`); resource drain (5%/tick minerals + fuel) when territory is undefended; `combat_round`, `fleet_destroyed_in_combat`, and `resources_drained_by_occupation` events logged
 - [x] Standing orders (hold/recall defaults — applied on confirmation window expiry)
 
 ### Phase 5 — Player Interaction
@@ -310,4 +330,4 @@ These are written to `.env` (git-ignored). To rotate: update `.env` and restart 
 
 ---
 
-*Last updated: Phases 1–2 complete, Phase 3 partial (probe dispatch/travel/range/detection/data storage/UI done; info selling pending), Phase 4 partial (fleet movement + vacation mode + confirmation window + standing orders done; war declaration + combat resolution pending), Phase 5 partial (chat + mail done; trading + marketplace + diplomacy flags pending). Dynamic probe-driven map generation implemented (integer richness 1–5, void rings, anomaly nodes).*
+*Last updated: Phases 1–2 complete, Phase 3 partial (probe dispatch/travel/range/detection/data storage/UI done; info selling pending), Phase 4 substantially complete (fleet movement + vacation mode + confirmation window + standing orders + war declaration + basic combat resolution done; pre-engagement skirmishing for `holding` fleets pending), Phase 5 partial (chat + mail done; trading + marketplace + diplomacy flags pending). Dynamic probe-driven map generation implemented (integer richness 1–5, void rings, anomaly nodes). Balance problems and implementation gaps documented in Known Issues.*

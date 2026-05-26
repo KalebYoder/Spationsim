@@ -25,6 +25,7 @@ from ..schemas.nation import (
     UnitStatsResponse,
 )
 from ..routers.auth import get_current_player
+from ..routers.diplomacy import is_at_war
 from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST
 
 router = APIRouter(prefix="/api/military", tags=["military"])
@@ -58,6 +59,7 @@ def _fleet_response(fleet: Fleet, db: Session) -> FleetResponse:
         id=fleet.id,
         unit_count=fleet.unit_count,
         status=fleet.status,
+        standing_order=fleet.standing_order,
         origin_territory_id=fleet.origin_territory,
         origin_node_key=origin.node_key if origin else None,
         origin_name=origin.name if origin else None,
@@ -67,6 +69,7 @@ def _fleet_response(fleet: Fleet, db: Session) -> FleetResponse:
         destination_node_key=dest.node_key if dest else None,
         destination_name=dest.name if dest else None,
         arrives_at=fleet.arrives_at.isoformat() if fleet.arrives_at else None,
+        confirmation_expires_at=fleet.confirmation_expires_at.isoformat() if fleet.confirmation_expires_at else None,
     )
 
 
@@ -233,6 +236,14 @@ def send_fleet(
     if body.from_territory_id == body.to_territory_id:
         raise HTTPException(status_code=409, detail="Origin and destination must differ")
 
+    # Block dispatch to another nation's territory without a war declaration
+    if dest.nation_id and dest.nation_id != nation.id:
+        if not is_at_war(db, nation.id, dest.nation_id):
+            raise HTTPException(
+                status_code=409,
+                detail="War declaration required to dispatch fleets to enemy territory",
+            )
+
     stationed = (
         db.query(Fleet)
         .filter(
@@ -272,6 +283,115 @@ def send_fleet(
     db.commit()
     db.refresh(transit)
     return _fleet_response(transit, db)
+
+
+@router.post("/fleets/{fleet_id}/confirm-attack", response_model=FleetResponse)
+def confirm_attack(
+    fleet_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    fleet = db.get(Fleet, fleet_id)
+    if not fleet or fleet.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
+
+    if fleet.status not in ("pending_confirmation", "holding"):
+        raise HTTPException(
+            status_code=409,
+            detail="Fleet must be pending confirmation or holding to confirm attack",
+        )
+
+    dest = db.get(Territory, fleet.destination_territory)
+    if not dest or not dest.nation_id or dest.nation_id == nation.id:
+        raise HTTPException(status_code=409, detail="No valid enemy territory at fleet destination")
+
+    if not is_at_war(db, nation.id, dest.nation_id):
+        raise HTTPException(status_code=409, detail="Not at war with the territory's owner")
+
+    fleet.status = "engaged"
+    fleet.confirmation_expires_at = None
+
+    db.add(Event(
+        type="attack_confirmed",
+        payload={
+            "fleet_id": fleet.id,
+            "attacker_nation_id": nation.id,
+            "defender_nation_id": dest.nation_id,
+            "territory_id": dest.id,
+            "node_key": dest.node_key,
+            "confirmed_at": datetime.now(timezone.utc).isoformat(),
+        },
+        scheduled_for=datetime.now(timezone.utc),
+        processed_at=datetime.now(timezone.utc),
+        status="processed",
+    ))
+
+    db.commit()
+    db.refresh(fleet)
+    return _fleet_response(fleet, db)
+
+
+@router.post("/fleets/{fleet_id}/recall", response_model=FleetResponse)
+def recall_fleet(
+    fleet_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    fleet = db.get(Fleet, fleet_id)
+    if not fleet or fleet.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
+
+    if fleet.status not in ("pending_confirmation", "holding"):
+        raise HTTPException(
+            status_code=409,
+            detail="Fleet must be pending confirmation or holding to recall",
+        )
+
+    now = datetime.now(timezone.utc)
+    home = db.get(Territory, fleet.origin_territory)
+    current = db.get(Territory, fleet.destination_territory)
+    if not home or not current:
+        raise HTTPException(status_code=409, detail="Fleet territory data is inconsistent")
+
+    distance = _hex_distance(home.node_key, current.node_key)
+    transit_ticks = ceil(distance / UNIT_STATS["starfighter"]["nodes_per_tick"])
+    arrives_at = now + timedelta(hours=transit_ticks * TICK_HOURS)
+
+    enemy_territory_id = fleet.destination_territory
+    home_territory_id = fleet.origin_territory
+
+    fleet.status = "in_transit"
+    fleet.origin_territory = current.id
+    fleet.destination_territory = home.id
+    fleet.departs_at = now
+    fleet.arrives_at = arrives_at
+    fleet.confirmation_expires_at = None
+
+    db.add(Event(
+        type="fleet_recalled",
+        payload={
+            "fleet_id": fleet.id,
+            "nation_id": nation.id,
+            "from_territory_id": enemy_territory_id,
+            "to_territory_id": home_territory_id,
+            "recalled_at": now.isoformat(),
+        },
+        scheduled_for=now,
+        processed_at=now,
+        status="processed",
+    ))
+
+    db.commit()
+    db.refresh(fleet)
+    return _fleet_response(fleet, db)
 
 
 @router.post("/fleets/{fleet_id}/claim", response_model=ClaimTerritoryResponse)
@@ -477,6 +597,7 @@ def load_colony_ship(
     db: Session = Depends(get_db),
     player: Player = Depends(get_current_player),
 ):
+    _require_aggression_allowed(player)
     nation = db.query(Nation).filter(Nation.player_id == player.id).first()
     if not nation:
         raise HTTPException(status_code=404, detail="No nation found")

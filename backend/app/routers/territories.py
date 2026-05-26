@@ -5,6 +5,7 @@ from ..db.database import get_db
 from ..models.territory import Territory
 from ..models.nation import Nation
 from ..models.player import Player
+from ..models.probe_data import ProbeData
 from ..schemas.nation import TerritoryResponse, TerritoryMapResponse, TerritoryRenameRequest
 from ..routers.auth import get_current_player
 
@@ -14,7 +15,21 @@ router = APIRouter(prefix="/api/territories", tags=["territories"])
 
 
 @router.get("", response_model=list[TerritoryMapResponse])
-def all_territories(db: Session = Depends(get_db)):
+def all_territories(
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+
+    revealed_ids: set[int] = set()
+    if nation:
+        own_ids = {t_id for (t_id,) in db.query(Territory.id).filter(Territory.nation_id == nation.id).all()}
+        probed_ids = {
+            t_id for (t_id,) in
+            db.query(ProbeData.territory_id).filter(ProbeData.discovered_by == nation.id).all()
+        }
+        revealed_ids = own_ids | probed_ids
+
     rows = (
         db.query(Territory, Nation.name)
         .outerjoin(Nation, Territory.nation_id == Nation.id)
@@ -29,8 +44,8 @@ def all_territories(db: Session = Depends(get_db)):
             is_colonized=t.is_colonized,
             nation_id=t.nation_id,
             nation_name=name,
-            mineral_richness=float(t.mineral_richness),
-            fuel_richness=float(t.fuel_richness),
+            mineral_richness=float(t.mineral_richness) if t.id in revealed_ids else None,
+            fuel_richness=float(t.fuel_richness) if t.id in revealed_ids else None,
         )
         for t, name in rows
     ]

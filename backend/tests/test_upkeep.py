@@ -2,21 +2,13 @@
 Test suite for currency upkeep costs in the tick system.
 
 Covers:
-  1. Assigned-population upkeep — 1 currency per assigned population unit per tick,
-     where "assigned population" is derived from FACILITY_POPULATION_COST[facility.type]
-     for every Infrastructure row owned by the nation (Mine=10, Refinery=10,
-     Probe Factory=20, Shipyard=40).
+  1. Facilities have no currency upkeep — buildings do not subtract from currency each tick.
+     Population assignment (staffing) remains a hard constraint but is not a currency cost.
   2. Fighter upkeep — 2 currency per starfighter (unit_count) per tick across all Fleet
      rows owned by the nation, regardless of fleet status.
-  3. Combined upkeep — both costs deducted together in a single tick pass.
-  4. ResourceLog accuracy — currency_delta written to the log equals net (income − upkeep),
-     which can be negative.
+  3. Combined upkeep — fighter upkeep is the only currency drain; facilities add no cost.
+  4. ResourceLog accuracy — currency_delta written to the log equals net (income − fighter_upkeep).
   5. Nation isolation — Nation A's units/facilities never affect Nation B's upkeep.
-
-These tests are written BEFORE the implementation.  They will fail until the feature
-is wired into backend/app/tasks/tick.py.
-
-Pattern: follow test_currency.py exactly — use _commit_and_run_tick / SessionLocal().
 """
 
 from __future__ import annotations
@@ -45,19 +37,11 @@ from app.models.territory import Territory
 from app.core.security import hash_password
 
 # ---------------------------------------------------------------------------
-# Constants (mirrors what the implementation must use)
+# Constants
 # ---------------------------------------------------------------------------
 
 CURRENCY_PER_TERRITORY = 500
 FIGHTER_UPKEEP_PER_UNIT = 2
-
-# From backend/app/constants.py
-FACILITY_POPULATION_COST = {
-    "mine":          10,
-    "refinery":      10,
-    "probe_factory": 20,
-    "shipyard":      40,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -166,19 +150,21 @@ def other_nation(db: Session, other_player: Player) -> Nation:
 
 
 # ===========================================================================
-# 1. ASSIGNED-POPULATION UPKEEP
+# 1. FACILITIES HAVE NO CURRENCY UPKEEP
 # ===========================================================================
 
 
-class TestAssignedPopulationUpkeep:
-    """Upkeep = sum(FACILITY_POPULATION_COST[f.type]) for all infra owned by nation."""
+class TestFacilitiesHaveNoCurrencyUpkeep:
+    """Facilities do not cost currency per tick.
+    Population assignment is a hard constraint (you cannot staff a mine without pop),
+    but it is not converted into a currency drain at tick time."""
 
-    def test_mine_upkeep_10_with_1_territory_net_490(
+    def test_mine_on_1_territory_earns_full_500(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """1 mine (10 assigned pop) + 1 colonized territory: net = 500 - 10 = 490."""
+        """1 mine on 1 colonized territory: full 500 currency income, no facility deduction."""
         territory = _make_colonized_territory(db, test_nation.id, "up_1_0")
         _make_infrastructure(db, territory.id, "mine")
 
@@ -187,21 +173,21 @@ class TestAssignedPopulationUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 490.0, (
-                f"1 mine upkeep=10, 1 territory income=500: expected net 490, "
+            assert float(nation.currency) == 500.0, (
+                f"Mine has no currency upkeep; 1 territory income=500: expected 500, "
                 f"got {nation.currency!r}"
             )
         finally:
             fresh.close()
 
-    def test_shipyard_upkeep_40_with_1_territory_net_450(
+    def test_shipyard_does_not_reduce_currency(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """mine(10)+shipyard(40) on 1 territory: income=500, upkeep=50, net=450."""
+        """mine+shipyard on 1 territory: income=500, no facility deduction."""
         territory = _make_colonized_territory(db, test_nation.id, "up_2_0")
-        _make_infrastructure(db, territory.id, "mine")     # makes territory income-generating
+        _make_infrastructure(db, territory.id, "mine")
         _make_infrastructure(db, territory.id, "shipyard")
 
         _commit_and_run_tick(db)
@@ -209,19 +195,19 @@ class TestAssignedPopulationUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 450.0, (
-                f"mine(10)+shipyard(40) upkeep=50, income=500: expected net 450, "
+            assert float(nation.currency) == 500.0, (
+                f"Shipyard has no currency upkeep; income=500: expected 500, "
                 f"got {nation.currency!r}"
             )
         finally:
             fresh.close()
 
-    def test_mixed_facilities_upkeep_60_with_1_territory_net_440(
+    def test_mixed_facilities_no_currency_deduction(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """mine(10) + refinery(10) + shipyard(40) = 60 assigned pop; 1 territory: net = 500 - 60 = 440."""
+        """mine + refinery + shipyard on 1 territory: income=500, no facility deduction."""
         territory = _make_colonized_territory(db, test_nation.id, "up_3_0")
         _make_infrastructure(db, territory.id, "mine")
         _make_infrastructure(db, territory.id, "refinery")
@@ -232,9 +218,9 @@ class TestAssignedPopulationUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 440.0, (
-                f"mine+refinery+shipyard upkeep=60, 1 territory income=500: "
-                f"expected net 440, got {nation.currency!r}"
+            assert float(nation.currency) == 500.0, (
+                f"No facility currency upkeep; 1 territory income=500: expected 500, "
+                f"got {nation.currency!r}"
             )
         finally:
             fresh.close()
@@ -244,7 +230,7 @@ class TestAssignedPopulationUpkeep:
         db: Session,
         test_nation: Nation,
     ):
-        """Nation with 1 colonized territory and no mine/refinery: 0 currency income, 0 upkeep."""
+        """Nation with 1 colonized territory and no mine/refinery: 0 currency income."""
         _make_colonized_territory(db, test_nation.id, "up_4_0")
 
         _commit_and_run_tick(db)
@@ -259,13 +245,12 @@ class TestAssignedPopulationUpkeep:
         finally:
             fresh.close()
 
-    def test_three_mines_upkeep_30_with_1_territory_net_470(
+    def test_three_mines_no_currency_upkeep(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """3 mines (3×10=30 assigned pop) + 1 territory: net = 500 - 30 = 470.
-        Verifies upkeep scales linearly with facility count."""
+        """3 mines on 1 territory: income=500, no per-mine currency deduction."""
         territory = _make_colonized_territory(db, test_nation.id, "up_5_0")
         _make_infrastructure(db, territory.id, "mine")
         _make_infrastructure(db, territory.id, "mine")
@@ -276,21 +261,21 @@ class TestAssignedPopulationUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 470.0, (
-                f"3 mines upkeep=30, 1 territory income=500: expected net 470, "
+            assert float(nation.currency) == 500.0, (
+                f"3 mines have no currency upkeep; 1 territory income=500: expected 500, "
                 f"got {nation.currency!r}"
             )
         finally:
             fresh.close()
 
-    def test_probe_factory_upkeep_20_with_1_territory_net_470(
+    def test_probe_factory_no_currency_upkeep(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """mine(10)+probe_factory(20) on 1 territory: income=500, upkeep=30, net=470."""
+        """mine+probe_factory on 1 territory: income=500, no facility deduction."""
         territory = _make_colonized_territory(db, test_nation.id, "up_6_0")
-        _make_infrastructure(db, territory.id, "mine")          # income-generating
+        _make_infrastructure(db, territory.id, "mine")
         _make_infrastructure(db, territory.id, "probe_factory")
 
         _commit_and_run_tick(db)
@@ -298,34 +283,33 @@ class TestAssignedPopulationUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 470.0, (
-                f"mine(10)+probe_factory(20) upkeep=30, income=500: expected net 470, "
+            assert float(nation.currency) == 500.0, (
+                f"Probe factory has no currency upkeep; income=500: expected 500, "
                 f"got {nation.currency!r}"
             )
         finally:
             fresh.close()
 
-    def test_facilities_on_multiple_territories_upkeep_sums_correctly(
+    def test_facilities_across_multiple_territories_no_currency_drain(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """territory A has mine (income+upkeep); territory B has shipyard only (no income, upkeep).
-        income=500 (t_a only), upkeep=10(mine)+40(shipyard)=50, net=450."""
+        """Territory A has mine (income-generating); territory B has shipyard only (no income).
+        Only territory A contributes income=500; neither facility costs currency."""
         t_a = _make_colonized_territory(db, test_nation.id, "up_7_0", distance_from_center=1)
         t_b = _make_colonized_territory(db, test_nation.id, "up_7_1", distance_from_center=2)
-        _make_infrastructure(db, t_a.id, "mine")       # income-generating; upkeep=10
-        _make_infrastructure(db, t_b.id, "shipyard")   # NOT income-generating; upkeep=40
+        _make_infrastructure(db, t_a.id, "mine")
+        _make_infrastructure(db, t_b.id, "shipyard")
 
         _commit_and_run_tick(db)
 
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            # income: 500 (t_a has mine); upkeep: 10 + 40 = 50; net = 450
-            assert float(nation.currency) == 450.0, (
-                f"mine on t_a (income=500) + shipyard on t_b (no income), upkeep=50: "
-                f"expected net 450, got {nation.currency!r}"
+            assert float(nation.currency) == 500.0, (
+                f"Neither mine nor shipyard costs currency; income=500: expected 500, "
+                f"got {nation.currency!r}"
             )
         finally:
             fresh.close()
@@ -344,7 +328,7 @@ class TestFighterUpkeep:
         db: Session,
         test_nation: Nation,
     ):
-        """mine(10) + 5 fighters(10 upkeep) on 1 territory: income=500, upkeep=20, net=480."""
+        """mine + 5 fighters (10 upkeep) on 1 territory: income=500, net=490."""
         territory = _make_colonized_territory(db, test_nation.id, "up_f1_0")
         _make_infrastructure(db, territory.id, "mine")
         _make_fleet(db, test_nation.id, territory.id, unit_count=5, status="stationed")
@@ -354,8 +338,8 @@ class TestFighterUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 480.0, (
-                f"mine(10)+5 fighters(10), income=500: expected net 480, "
+            assert float(nation.currency) == 490.0, (
+                f"5 fighters upkeep=10, income=500: expected net 490, "
                 f"got {nation.currency!r}"
             )
         finally:
@@ -367,7 +351,7 @@ class TestFighterUpkeep:
         test_nation: Nation,
     ):
         """Fleet A (stationed, 12 fighters) + Fleet B (in_transit, 8 fighters) = 20 total.
-        mine(10) + 20 fighters(40 upkeep); income=500; net=450."""
+        mine + 20 fighters (40 upkeep); income=500; net=460."""
         t_origin = _make_colonized_territory(db, test_nation.id, "up_f2_0")
         _make_infrastructure(db, t_origin.id, "mine")
         t_dest = Territory(
@@ -397,9 +381,9 @@ class TestFighterUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 450.0, (
-                f"mine(10)+12 stationed+8 in_transit (20 fighters, upkeep=40), "
-                f"income=500: expected net 450, got {nation.currency!r}"
+            assert float(nation.currency) == 460.0, (
+                f"12 stationed+8 in_transit (20 fighters, upkeep=40), "
+                f"income=500: expected net 460, got {nation.currency!r}"
             )
         finally:
             fresh.close()
@@ -409,7 +393,7 @@ class TestFighterUpkeep:
         db: Session,
         test_nation: Nation,
     ):
-        """Nation with 1 mine territory and no fleets: income=500, mine_upkeep=10, net=490."""
+        """Nation with 1 mine territory and no fleets: income=500, no upkeep, net=500."""
         t = _make_colonized_territory(db, test_nation.id, "up_f3_0")
         _make_infrastructure(db, t.id, "mine")
 
@@ -418,8 +402,8 @@ class TestFighterUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 490.0, (
-                f"No fighters means no fighter upkeep; mine territory nets 490; "
+            assert float(nation.currency) == 500.0, (
+                f"No fighters and no facility upkeep; mine territory nets 500; "
                 f"got {nation.currency!r}"
             )
         finally:
@@ -431,7 +415,7 @@ class TestFighterUpkeep:
         test_nation: Nation,
     ):
         """Fighters in pending_confirmation cost upkeep regardless of status.
-        mine(10) + 10 fighters(20 upkeep); income=500; net=470."""
+        mine + 10 fighters (20 upkeep); income=500; net=480."""
         territory = _make_colonized_territory(db, test_nation.id, "up_f4_0")
         _make_infrastructure(db, territory.id, "mine")
         fleet = Fleet(
@@ -452,9 +436,9 @@ class TestFighterUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 470.0, (
-                f"mine(10)+10 fighters in pending_confirmation (upkeep=20), income=500: "
-                f"expected net 470, got {nation.currency!r}"
+            assert float(nation.currency) == 480.0, (
+                f"10 fighters in pending_confirmation (upkeep=20), income=500: "
+                f"expected net 480, got {nation.currency!r}"
             )
         finally:
             fresh.close()
@@ -465,7 +449,7 @@ class TestFighterUpkeep:
         test_nation: Nation,
     ):
         """Fighters with status=holding cost upkeep.
-        mine(10) + 15 fighters(30 upkeep); income=500; net=460."""
+        mine + 15 fighters (30 upkeep); income=500; net=470."""
         territory = _make_colonized_territory(db, test_nation.id, "up_f5_0")
         _make_infrastructure(db, territory.id, "mine")
         _make_fleet(db, test_nation.id, territory.id, unit_count=15, status="holding")
@@ -475,9 +459,9 @@ class TestFighterUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 460.0, (
-                f"mine(10)+15 fighters in holding (upkeep=30), income=500: "
-                f"expected net 460, got {nation.currency!r}"
+            assert float(nation.currency) == 470.0, (
+                f"15 fighters in holding (upkeep=30), income=500: "
+                f"expected net 470, got {nation.currency!r}"
             )
         finally:
             fresh.close()
@@ -488,7 +472,7 @@ class TestFighterUpkeep:
         test_nation: Nation,
     ):
         """Fighters with status=engaged cost upkeep.
-        mine(10) + 25 fighters(50 upkeep); income=500; net=440."""
+        mine + 25 fighters (50 upkeep); income=500; net=450."""
         territory = _make_colonized_territory(db, test_nation.id, "up_f6_0")
         _make_infrastructure(db, territory.id, "mine")
         _make_fleet(db, test_nation.id, territory.id, unit_count=25, status="engaged")
@@ -498,9 +482,9 @@ class TestFighterUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 440.0, (
-                f"mine(10)+25 fighters in engaged (upkeep=50), income=500: "
-                f"expected net 440, got {nation.currency!r}"
+            assert float(nation.currency) == 450.0, (
+                f"25 fighters in engaged (upkeep=50), income=500: "
+                f"expected net 450, got {nation.currency!r}"
             )
         finally:
             fresh.close()
@@ -511,8 +495,8 @@ class TestFighterUpkeep:
         test_nation: Nation,
     ):
         """Multiple fleets with different statuses: total upkeep = 2 × sum of all unit_counts.
-        mine(10) + Fleet1 stationed=3, Fleet2 holding=4, Fleet3 in_transit=3 → 10 fighters(20).
-        income=500; total upkeep=30; net=470."""
+        mine + Fleet1 stationed=3, Fleet2 holding=4, Fleet3 in_transit=3 → 10 fighters (20 upkeep).
+        income=500; net=480."""
         territory = _make_colonized_territory(db, test_nation.id, "up_f7_0")
         _make_infrastructure(db, territory.id, "mine")
         t_dest = Territory(
@@ -543,55 +527,52 @@ class TestFighterUpkeep:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 470.0, (
-                f"mine(10)+3+4+3=10 fighters (upkeep=20), income=500: "
-                f"expected net 470, got {nation.currency!r}"
+            assert float(nation.currency) == 480.0, (
+                f"3+4+3=10 fighters (upkeep=20), income=500: "
+                f"expected net 480, got {nation.currency!r}"
             )
         finally:
             fresh.close()
 
 
 # ===========================================================================
-# 3. COMBINED UPKEEP
+# 3. FIGHTER-ONLY UPKEEP (facilities are free)
 # ===========================================================================
 
 
 class TestCombinedUpkeep:
-    """Both population and fighter upkeep are subtracted in the same tick pass."""
+    """Fighter upkeep is the only per-tick currency drain. Facilities are free."""
 
-    def test_pop_upkeep_plus_fighter_upkeep_deducted_together(
+    def test_fighter_upkeep_deducted_from_territory_income(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """1 mine (pop upkeep=10) + 5 fighters (fighter upkeep=10) + 1 territory (income=500):
-        net = 500 - 10 - 10 = 480."""
+        """1 mine + 5 fighters (10 upkeep) + 1 territory (income=500): net=490."""
         territory = _make_colonized_territory(db, test_nation.id, "up_c1_0")
-        _make_infrastructure(db, territory.id, "mine")           # pop upkeep = 10
-        _make_fleet(db, test_nation.id, territory.id, unit_count=5, status="stationed")  # fighter upkeep = 10
+        _make_infrastructure(db, territory.id, "mine")
+        _make_fleet(db, test_nation.id, territory.id, unit_count=5, status="stationed")
 
         _commit_and_run_tick(db)
 
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 480.0, (
-                f"mine(10 pop) + 5 fighters(10 upkeep), income=500: "
-                f"expected net 480, got {nation.currency!r}"
+            assert float(nation.currency) == 490.0, (
+                f"5 fighters (10 upkeep), mine territory income=500: "
+                f"expected net 490, got {nation.currency!r}"
             )
         finally:
             fresh.close()
 
-    def test_combined_upkeep_can_push_currency_negative(
+    def test_fighter_upkeep_can_push_currency_negative(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """No territories (income=0) + 1 mine (pop upkeep=10) + 10 fighters (fighter upkeep=20):
-        net = 0 - 10 - 20 = -30.  Currency must go negative — no floor."""
-        # Provide an uncolonized territory as a home base for the fleet anchor
-        # (origin_territory must exist; territory need not be colonized for upkeep)
-        uncolonized = Territory(
+        """No territories (income=0) + 10 fighters (upkeep=20):
+        net = 0 - 20 = -20.  Currency must go negative — no floor."""
+        anchor = Territory(
             node_key="up_c2_anchor",
             name="Anchor",
             territory_type="normal",
@@ -601,50 +582,46 @@ class TestCombinedUpkeep:
             distance_from_center=1,
             is_colonized=False,
         )
-        db.add(uncolonized)
+        db.add(anchor)
         db.flush()
 
-        _make_infrastructure(db, uncolonized.id, "mine")           # pop upkeep = 10
-        _make_fleet(db, test_nation.id, uncolonized.id, unit_count=10, status="stationed")  # fighter upkeep = 20
+        _make_fleet(db, test_nation.id, anchor.id, unit_count=10, status="stationed")
 
         _commit_and_run_tick(db)
 
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            # income = 0 (no colonized territories); upkeep = 10 + 20 = 30
-            assert float(nation.currency) == -30.0, (
-                f"No colonized territories, mine(10)+10 fighters(20) upkeep: "
-                f"expected -30 (currency can go negative), got {nation.currency!r}"
+            assert float(nation.currency) == -20.0, (
+                f"10 fighters upkeep=20 with no income: "
+                f"expected -20 (currency can go negative), got {nation.currency!r}"
             )
         finally:
             fresh.close()
 
-    def test_combined_upkeep_large_scenario(
+    def test_large_scenario_only_fighters_cost_currency(
         self,
         db: Session,
         test_nation: Nation,
     ):
         """2 income territories + shipyard + probe_factory + 15 fighters.
-        mine on each territory (2×10=20 upkeep); 2×500=1000 income;
-        shipyard(40)+probe_factory(20)+15 fighters(30)=90; total upkeep=110; net=890."""
+        income=1000; only fighter upkeep=30; net=970."""
         t1 = _make_colonized_territory(db, test_nation.id, "up_c3_0", distance_from_center=1)
         t2 = _make_colonized_territory(db, test_nation.id, "up_c3_1", distance_from_center=2)
-        _make_infrastructure(db, t1.id, "mine")            # makes t1 income-generating; upkeep=10
-        _make_infrastructure(db, t2.id, "mine")            # makes t2 income-generating; upkeep=10
-        _make_infrastructure(db, t1.id, "shipyard")        # pop upkeep = 40
-        _make_infrastructure(db, t2.id, "probe_factory")   # pop upkeep = 20
-        _make_fleet(db, test_nation.id, t1.id, unit_count=15, status="stationed")  # fighter upkeep = 30
+        _make_infrastructure(db, t1.id, "mine")
+        _make_infrastructure(db, t2.id, "mine")
+        _make_infrastructure(db, t1.id, "shipyard")
+        _make_infrastructure(db, t2.id, "probe_factory")
+        _make_fleet(db, test_nation.id, t1.id, unit_count=15, status="stationed")
 
         _commit_and_run_tick(db)
 
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            # income=1000; upkeep=10+10+40+20+30=110; net=890
-            assert float(nation.currency) == 890.0, (
-                f"2 mine territories(1000) - mines(20) - shipyard(40) - probe_factory(20) "
-                f"- 15 fighters(30): expected net 890, got {nation.currency!r}"
+            assert float(nation.currency) == 970.0, (
+                f"2 mine territories (1000 income) - 15 fighters (30 upkeep): "
+                f"expected 970, got {nation.currency!r}"
             )
         finally:
             fresh.close()
@@ -655,20 +632,19 @@ class TestCombinedUpkeep:
         test_nation: Nation,
     ):
         """Starting with a pre-existing currency balance: tick must add net delta on top.
-        Pre-balance=1000; 1 territory(+500); 1 mine(-10); 3 fighters(-6): net delta=484; final=1484."""
+        Pre-balance=1000; 1 territory (+500); 3 fighters (-6): net delta=494; final=1494."""
         test_nation.currency = 1000
         territory = _make_colonized_territory(db, test_nation.id, "up_c4_0")
-        _make_infrastructure(db, territory.id, "mine")        # pop upkeep = 10
-        _make_fleet(db, test_nation.id, territory.id, unit_count=3, status="stationed")  # fighter upkeep = 6
+        _make_infrastructure(db, territory.id, "mine")
+        _make_fleet(db, test_nation.id, territory.id, unit_count=3, status="stationed")
 
         _commit_and_run_tick(db)
 
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            # 1000 + (500 - 10 - 6) = 1000 + 484 = 1484
-            assert float(nation.currency) == 1484.0, (
-                f"Pre-balance 1000 + net delta 484 (500-10-6): expected 1484, "
+            assert float(nation.currency) == 1494.0, (
+                f"Pre-balance 1000 + net delta 494 (500-6): expected 1494, "
                 f"got {nation.currency!r}"
             )
         finally:
@@ -681,17 +657,17 @@ class TestCombinedUpkeep:
 
 
 class TestResourceLogUpkeepAccuracy:
-    """currency_delta written to ResourceLog must equal the NET delta (income minus upkeep)."""
+    """currency_delta written to ResourceLog must equal the NET delta (income minus fighter_upkeep)."""
 
-    def test_resource_log_currency_delta_is_net_not_gross_income(
+    def test_resource_log_currency_delta_is_full_income_when_no_fighters(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """With 1 territory and 1 mine, gross income=500 but net=490.
-        ResourceLog.currency_delta must be 490, not 500."""
+        """With 1 territory and 1 mine and no fighters, gross income=500 equals net=500.
+        ResourceLog.currency_delta must be 500."""
         territory = _make_colonized_territory(db, test_nation.id, "up_l1_0")
-        _make_infrastructure(db, territory.id, "mine")   # pop upkeep = 10
+        _make_infrastructure(db, territory.id, "mine")
 
         _commit_and_run_tick(db)
 
@@ -701,8 +677,8 @@ class TestResourceLogUpkeepAccuracy:
                 ResourceLog.nation_id == test_nation.id,
             ).order_by(ResourceLog.id.desc()).first()
             assert log is not None, "ResourceLog row must exist after tick"
-            assert float(log.currency_delta) == 490.0, (
-                f"currency_delta must be net 490 (500 income - 10 upkeep), "
+            assert float(log.currency_delta) == 500.0, (
+                f"currency_delta must be 500 (full income, no upkeep), "
                 f"got {log.currency_delta!r}"
             )
         finally:
@@ -713,7 +689,7 @@ class TestResourceLogUpkeepAccuracy:
         db: Session,
         test_nation: Nation,
     ):
-        """When upkeep > income the currency_delta in ResourceLog must be negative.
+        """When fighter upkeep > income the currency_delta in ResourceLog must be negative.
         0 territories (income=0) + 10 fighters (upkeep=20): currency_delta = -20."""
         anchor = Territory(
             node_key="up_l2_anchor",
@@ -789,8 +765,7 @@ class TestResourceLogUpkeepAccuracy:
         db: Session,
         test_nation: Nation,
     ):
-        """A ResourceLog row must be written even when income is zero but upkeep is non-zero.
-        The net delta is non-zero so the log entry must be created."""
+        """A ResourceLog row must be written even when income is zero but fighter upkeep is non-zero."""
         anchor = Territory(
             node_key="up_l4_anchor",
             name="Anchor L4",
@@ -826,7 +801,7 @@ class TestResourceLogUpkeepAccuracy:
     ):
         """After 2 ticks the sum of all ResourceLog.currency_delta rows must equal
         nation.currency (starting from 0).
-        Setup: 1 territory income=500, mine upkeep=10, 5 fighters upkeep=10 → net per tick=480."""
+        Setup: 1 territory income=500, 5 fighters upkeep=10 → net per tick=490."""
         territory = _make_colonized_territory(db, test_nation.id, "up_l5_0")
         _make_infrastructure(db, territory.id, "mine")
         _make_fleet(db, test_nation.id, territory.id, unit_count=5, status="stationed")
@@ -857,7 +832,7 @@ class TestResourceLogUpkeepAccuracy:
 
 
 class TestUpkeepIsolation:
-    """Upkeep costs from Nation A's fleets and facilities must NOT affect Nation B."""
+    """Upkeep costs from Nation A's fleets must NOT affect Nation B."""
 
     def test_nation_a_fighters_do_not_affect_nation_b_upkeep(
         self,
@@ -866,8 +841,8 @@ class TestUpkeepIsolation:
         other_nation: Nation,
     ):
         """Nation A's fighters do not increase Nation B's upkeep.
-        Both have 1 mine territory. A: income=500, mine(10)+50 fighters(100)=110 upkeep, net=390.
-        B: income=500, mine(10) upkeep, net=490."""
+        A: income=500, 50 fighters (100 upkeep), net=400.
+        B: income=500, no fighters, net=500."""
         t_a = _make_colonized_territory(db, test_nation.id, "up_iso1_a", distance_from_center=1)
         t_b = _make_colonized_territory(db, other_nation.id, "up_iso1_b", distance_from_center=2)
         _make_infrastructure(db, t_a.id, "mine")
@@ -882,13 +857,11 @@ class TestUpkeepIsolation:
             nation_a = fresh.get(Nation, test_nation.id)
             nation_b = fresh.get(Nation, other_nation.id)
 
-            # Nation A: 500 income - 10 mine - 100 fighter upkeep = 390
-            assert float(nation_a.currency) == 390.0, (
-                f"Nation A with mine+50 fighters: expected 390, got {nation_a.currency!r}"
+            assert float(nation_a.currency) == 400.0, (
+                f"Nation A with 50 fighters: expected 400, got {nation_a.currency!r}"
             )
-            # Nation B: 500 income - 10 mine upkeep = 490
-            assert float(nation_b.currency) == 490.0, (
-                f"Nation B with only mine: expected 490 (unaffected by A's upkeep), "
+            assert float(nation_b.currency) == 500.0, (
+                f"Nation B with no fighters: expected 500 (unaffected by A's upkeep), "
                 f"got {nation_b.currency!r}"
             )
         finally:
@@ -900,15 +873,15 @@ class TestUpkeepIsolation:
         test_nation: Nation,
         other_nation: Nation,
     ):
-        """Nation A's shipyard upkeep does not bleed into Nation B.
-        A: mine(10)+shipyard(40) upkeep, income=500, net=450.
-        B: mine(10) upkeep, income=500, net=490."""
+        """Nation A's facilities do not affect Nation B's currency.
+        A: income=500, no fighters, net=500.
+        B: income=500, no fighters, net=500."""
         t_a = _make_colonized_territory(db, test_nation.id, "up_iso2_a", distance_from_center=1)
         t_b = _make_colonized_territory(db, other_nation.id, "up_iso2_b", distance_from_center=2)
         _make_infrastructure(db, t_a.id, "mine")
         _make_infrastructure(db, t_b.id, "mine")
 
-        _make_infrastructure(db, t_a.id, "shipyard")  # Nation A extra upkeep = 40
+        _make_infrastructure(db, t_a.id, "shipyard")
 
         _commit_and_run_tick(db)
 
@@ -917,14 +890,11 @@ class TestUpkeepIsolation:
             nation_a = fresh.get(Nation, test_nation.id)
             nation_b = fresh.get(Nation, other_nation.id)
 
-            # Nation A: 500 income - 10 mine - 40 shipyard = 450
-            assert float(nation_a.currency) == 450.0, (
-                f"Nation A with mine+shipyard: expected 450, got {nation_a.currency!r}"
+            assert float(nation_a.currency) == 500.0, (
+                f"Nation A with shipyard (no currency cost): expected 500, got {nation_a.currency!r}"
             )
-            # Nation B: 500 income - 10 mine = 490
-            assert float(nation_b.currency) == 490.0, (
-                f"Nation B with only mine: expected 490 (unaffected by A's upkeep), "
-                f"got {nation_b.currency!r}"
+            assert float(nation_b.currency) == 500.0, (
+                f"Nation B: expected 500 (unaffected), got {nation_b.currency!r}"
             )
         finally:
             fresh.close()
@@ -936,19 +906,19 @@ class TestUpkeepIsolation:
         other_nation: Nation,
     ):
         """Each nation's upkeep is calculated independently.
-        Nation A: mine(10)+5 fighters(10) on 1 territory → net=480.
-        Nation B: mines on both territories(20)+shipyard(40)+20 fighters(40) → net=1000-100=900."""
+        Nation A: mine + 5 fighters (10 upkeep) on 1 territory → net=490.
+        Nation B: 2 mines + shipyard + 20 fighters (40 upkeep) on 2 territories → net=960."""
         t_a = _make_colonized_territory(db, test_nation.id, "up_iso3_a", distance_from_center=1)
         t_b1 = _make_colonized_territory(db, other_nation.id, "up_iso3_b1", distance_from_center=2)
         t_b2 = _make_colonized_territory(db, other_nation.id, "up_iso3_b2", distance_from_center=3)
 
-        _make_infrastructure(db, t_a.id, "mine")             # Nation A: income + upkeep=10
-        _make_fleet(db, test_nation.id, t_a.id, unit_count=5, status="stationed")  # Nation A: upkeep=10
+        _make_infrastructure(db, t_a.id, "mine")
+        _make_fleet(db, test_nation.id, t_a.id, unit_count=5, status="stationed")
 
-        _make_infrastructure(db, t_b1.id, "mine")            # Nation B: t_b1 income + upkeep=10
-        _make_infrastructure(db, t_b2.id, "mine")            # Nation B: t_b2 income + upkeep=10
-        _make_infrastructure(db, t_b1.id, "shipyard")        # Nation B: upkeep=40
-        _make_fleet(db, other_nation.id, t_b1.id, unit_count=20, status="stationed")  # Nation B: upkeep=40
+        _make_infrastructure(db, t_b1.id, "mine")
+        _make_infrastructure(db, t_b2.id, "mine")
+        _make_infrastructure(db, t_b1.id, "shipyard")
+        _make_fleet(db, other_nation.id, t_b1.id, unit_count=20, status="stationed")
 
         _commit_and_run_tick(db)
 
@@ -957,13 +927,11 @@ class TestUpkeepIsolation:
             nation_a = fresh.get(Nation, test_nation.id)
             nation_b = fresh.get(Nation, other_nation.id)
 
-            # A: 500 - 10(mine) - 10(fighters) = 480
-            assert float(nation_a.currency) == 480.0, (
-                f"Nation A (mine+5 fighters): expected 480, got {nation_a.currency!r}"
+            assert float(nation_a.currency) == 490.0, (
+                f"Nation A (mine + 5 fighters): expected 490, got {nation_a.currency!r}"
             )
-            # B: 1000 - 10 - 10(mines) - 40(shipyard) - 40(fighters) = 900
-            assert float(nation_b.currency) == 900.0, (
-                f"Nation B (2 mine territories+shipyard+20 fighters): expected 900, "
+            assert float(nation_b.currency) == 960.0, (
+                f"Nation B (2 mine territories + 20 fighters): expected 960, "
                 f"got {nation_b.currency!r}"
             )
         finally:
@@ -976,13 +944,13 @@ class TestUpkeepIsolation:
         other_nation: Nation,
     ):
         """ResourceLog.currency_delta independently reflects each nation's net delta.
-        Nation A: mine(10 upkeep), income=500, net=490.
-        Nation B: mine(10 upkeep), income=500, net=490."""
+        Nation A: mine, no fighters, income=500, delta=500.
+        Nation B: mine, no fighters, income=500, delta=500."""
         t_a = _make_colonized_territory(db, test_nation.id, "up_iso4_a", distance_from_center=1)
         t_b = _make_colonized_territory(db, other_nation.id, "up_iso4_b", distance_from_center=2)
 
-        _make_infrastructure(db, t_a.id, "mine")   # Nation A pop upkeep = 10
-        _make_infrastructure(db, t_b.id, "mine")   # Nation B pop upkeep = 10
+        _make_infrastructure(db, t_a.id, "mine")
+        _make_infrastructure(db, t_b.id, "mine")
 
         _commit_and_run_tick(db)
 
@@ -996,14 +964,13 @@ class TestUpkeepIsolation:
             ).order_by(ResourceLog.id.desc()).first()
 
             assert log_a is not None, "ResourceLog must exist for Nation A"
-            assert float(log_a.currency_delta) == 490.0, (
-                f"Nation A ResourceLog.currency_delta must be 490, got {log_a.currency_delta!r}"
+            assert float(log_a.currency_delta) == 500.0, (
+                f"Nation A ResourceLog.currency_delta must be 500, got {log_a.currency_delta!r}"
             )
 
             assert log_b is not None, "ResourceLog must exist for Nation B"
-            assert float(log_b.currency_delta) == 490.0, (
-                f"Nation B ResourceLog.currency_delta must be 490 (mine upkeep deducted), "
-                f"got {log_b.currency_delta!r}"
+            assert float(log_b.currency_delta) == 500.0, (
+                f"Nation B ResourceLog.currency_delta must be 500, got {log_b.currency_delta!r}"
             )
         finally:
             fresh.close()

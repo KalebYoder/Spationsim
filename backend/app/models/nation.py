@@ -16,7 +16,7 @@ class Nation(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     minerals = Column(Numeric(12, 2), default=0, nullable=False)
     fuel = Column(Numeric(12, 2), default=0, nullable=False)
-    starfighters = Column(Integer, default=0, nullable=False)
+    currency = Column(Numeric(12, 2), default=0, nullable=False)
     probes_reserve = Column(Integer, default=0, nullable=False)
     diplomatic_status_default = Column(String(16), default="neutral", nullable=False)
 
