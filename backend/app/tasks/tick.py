@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from math import ceil
-from sqlalchemy import text, func as sqlfunc
+from sqlalchemy import or_, text, func as sqlfunc
 from ..celery_app import celery_app
 from ..db.database import SessionLocal
 from ..models.colony_ship import ColonyShip
@@ -14,20 +14,24 @@ from ..models.territory_population import TerritoryPopulation
 from ..models.diplomacy import Diplomacy
 from ..models.probe import Probe
 from ..models.probe_data import ProbeData
-from ..constants import POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER, PROBE_VISION_RADIUS, UNIT_STATS
+from ..constants import (
+    POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER, PROBE_VISION_RADIUS,
+    UNIT_STATS, FACILITY_COSTS, DEMOLISH_REFUND_FRACTION,
+)
 from ..map_gen import generate_territory
 
 TICK_HOURS = 2
 _CONFIRMATION_WINDOW = timedelta(hours=TICK_HOURS * 2)  # 2 ticks = 4 hours
 
 
-def _nations_at_war(db, nation_a_id: int, nation_b_id: int) -> bool:
+def _get_diplomacy_status(db, nation_a_id: int, nation_b_id: int) -> str:
     a, b = min(nation_a_id, nation_b_id), max(nation_a_id, nation_b_id)
-    return db.query(Diplomacy).filter(
-        Diplomacy.nation_a == a,
-        Diplomacy.nation_b == b,
-        Diplomacy.status == "war",
-    ).first() is not None
+    row = db.query(Diplomacy).filter(Diplomacy.nation_a == a, Diplomacy.nation_b == b).first()
+    return row.status if row else "neutral"
+
+
+def _nations_at_war(db, nation_a_id: int, nation_b_id: int) -> bool:
+    return _get_diplomacy_status(db, nation_a_id, nation_b_id) == "war"
 
 
 def _send_fleet_home(db, fleet: Fleet, now: datetime) -> None:
@@ -68,6 +72,28 @@ def run_tick():
     db = SessionLocal()
     tick_at = datetime.now(timezone.utc)
     try:
+        # Promote war_pending rows whose grace period has elapsed to full war
+        pending_wars = (
+            db.query(Diplomacy)
+            .filter(Diplomacy.status == "war_pending", Diplomacy.war_starts_at <= tick_at)
+            .all()
+        )
+        for row in pending_wars:
+            row.status = "war"
+            row.war_starts_at = None
+            row.updated_at = tick_at
+            db.add(Event(
+                type="war_started",
+                payload={
+                    "nation_a": row.nation_a,
+                    "nation_b": row.nation_b,
+                    "tick_at": tick_at.isoformat(),
+                },
+                scheduled_for=tick_at,
+                processed_at=tick_at,
+                status="processed",
+            ))
+
         nations = db.query(Nation).all()
 
         for nation in nations:
@@ -77,21 +103,29 @@ def run_tick():
             ]
 
             facilities = (
-                db.query(Infrastructure.type, Territory.mineral_richness, Territory.fuel_richness)
+                db.query(Infrastructure.type, Territory.mineral_richness, Territory.fuel_richness, Territory.territory_type)
                 .join(Territory, Infrastructure.territory_id == Territory.id)
-                .filter(Territory.nation_id == nation.id)
+                .filter(Territory.nation_id == nation.id, Infrastructure.status == "active")
                 .all()
             )
 
             minerals_delta = 0
             fuel_delta = 0
-            for ftype, mineral_richness, fuel_richness in facilities:
+            for ftype, mineral_richness, fuel_richness, territory_type in facilities:
                 if ftype == "mine":
-                    minerals_delta += round(2 * float(mineral_richness))
+                    r = float(mineral_richness)
+                    if territory_type == "anomaly":
+                        minerals_delta += round(r * 2 + 10)
+                    else:
+                        minerals_delta += max(5, round(r * 2))
                 elif ftype == "refinery":
-                    fuel_delta += round(2 * float(fuel_richness))
+                    r = float(fuel_richness)
+                    if territory_type == "anomaly":
+                        fuel_delta += round(r * 2 + 10)
+                    else:
+                        fuel_delta += max(5, round(r * 2))
 
-            # 500 currency per colonized territory that has at least one mine or refinery
+            # 500 currency per colonized territory that has at least one active mine or refinery
             income_territory_count = (
                 db.query(Territory.id)
                 .join(Infrastructure, Territory.id == Infrastructure.territory_id)
@@ -99,19 +133,44 @@ def run_tick():
                     Territory.nation_id == nation.id,
                     Territory.is_colonized == True,
                     Infrastructure.type.in_(["mine", "refinery"]),
+                    Infrastructure.status == "active",
                 )
                 .distinct()
                 .count()
             )
             currency_delta = 500 * income_territory_count
 
-            # Upkeep: 2 currency per fighter per tick
+            # Currency upkeep: 2 currency per fighter per tick (all fleets regardless of status)
             fighter_upkeep = (
                 db.query(sqlfunc.coalesce(sqlfunc.sum(Fleet.unit_count), 0))
                 .filter(Fleet.nation_id == nation.id)
                 .scalar()
             )
             currency_delta -= fighter_upkeep * 2
+
+            # Fuel upkeep: 1 fuel per fighter not docked on own territory.
+            # "Docked" = stationed on a territory owned by this nation.
+            # All other statuses (in_transit, holding, engaged, pending_confirmation)
+            # and stationed fleets on foreign/unclaimed territory all pay upkeep.
+            in_space_units = (
+                db.query(sqlfunc.coalesce(sqlfunc.sum(Fleet.unit_count), 0))
+                .filter(
+                    Fleet.nation_id == nation.id,
+                    Fleet.status != "stationed",
+                )
+                .scalar()
+            )
+            stationed_foreign_units = (
+                db.query(sqlfunc.coalesce(sqlfunc.sum(Fleet.unit_count), 0))
+                .join(Territory, Fleet.origin_territory == Territory.id)
+                .filter(
+                    Fleet.nation_id == nation.id,
+                    Fleet.status == "stationed",
+                    or_(Territory.nation_id.is_(None), Territory.nation_id != nation.id),
+                )
+                .scalar()
+            )
+            fuel_delta -= (in_space_units + stationed_foreign_units)
 
             # Grow population in each territory (5% per tick, capped by richness)
             pop_rows = (
@@ -142,6 +201,59 @@ def run_tick():
                     currency_delta=currency_delta,
                 ))
 
+        # Complete facility constructions
+        due_constructions = (
+            db.query(Infrastructure)
+            .filter(Infrastructure.status == "under_construction", Infrastructure.completes_at <= tick_at)
+            .all()
+        )
+        for infra in due_constructions:
+            infra.status = "active"
+            infra.completes_at = None
+            db.add(Event(
+                type="facility_construction_complete",
+                payload={
+                    "infrastructure_id": infra.id,
+                    "territory_id": infra.territory_id,
+                    "facility_type": infra.type,
+                    "tick_at": tick_at.isoformat(),
+                },
+                scheduled_for=tick_at,
+                processed_at=tick_at,
+                status="processed",
+            ))
+
+        # Complete facility demolitions — refund 25% of build cost (floored)
+        due_demolitions = (
+            db.query(Infrastructure, Territory.nation_id)
+            .join(Territory, Infrastructure.territory_id == Territory.id)
+            .filter(Infrastructure.status == "demolishing", Infrastructure.completes_at <= tick_at)
+            .all()
+        )
+        for infra, nation_id in due_demolitions:
+            nation_obj = db.get(Nation, nation_id)
+            if nation_obj:
+                cost = FACILITY_COSTS.get(infra.type, {"minerals": 0, "fuel": 0})
+                minerals_refund = int(cost["minerals"] * DEMOLISH_REFUND_FRACTION)
+                fuel_refund = int(cost["fuel"] * DEMOLISH_REFUND_FRACTION)
+                nation_obj.minerals += minerals_refund
+                nation_obj.fuel += fuel_refund
+                db.add(Event(
+                    type="facility_demolition_complete",
+                    payload={
+                        "infrastructure_id": infra.id,
+                        "territory_id": infra.territory_id,
+                        "facility_type": infra.type,
+                        "minerals_refunded": minerals_refund,
+                        "fuel_refunded": fuel_refund,
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
+            db.delete(infra)
+
         # Land in-transit fleets that have arrived
         arrived_fleets = (
             db.query(Fleet)
@@ -154,40 +266,93 @@ def run_tick():
                 continue
 
             dest_id = dest.id
-            is_enemy_territory = (
-                dest.nation_id is not None
-                and dest.nation_id != fleet.nation_id
-                and _nations_at_war(db, fleet.nation_id, dest.nation_id)
-            )
+            dest_owner = dest.nation_id
+            is_other_nation = dest_owner is not None and dest_owner != fleet.nation_id
+            is_planet = dest.territory_type != "void"
 
-            if is_enemy_territory:
-                fleet.status = "pending_confirmation"
-                fleet.confirmation_expires_at = tick_at + _CONFIRMATION_WINDOW
+            if is_other_nation:
+                diplo = _get_diplomacy_status(db, fleet.nation_id, dest_owner)
+
+                if diplo == "war" and is_planet:
+                    # Confirmation window required; alert both sides
+                    fleet.status = "pending_confirmation"
+                    fleet.confirmation_expires_at = tick_at + _CONFIRMATION_WINDOW
+                    db.add(Event(
+                        type="fleet_arrived_at_enemy_territory",
+                        payload={
+                            "fleet_id": fleet.id,
+                            "attacker_nation_id": fleet.nation_id,
+                            "defender_nation_id": dest_owner,
+                            "territory_id": dest_id,
+                            "node_key": dest.node_key,
+                            "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+                    db.add(Event(
+                        type="enemy_fleet_arrived",
+                        payload={
+                            "fleet_id": fleet.id,
+                            "attacker_nation_id": fleet.nation_id,
+                            "defender_nation_id": dest_owner,
+                            "territory_id": dest_id,
+                            "node_key": dest.node_key,
+                            "unit_count": fleet.unit_count,
+                            "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+                    continue
+
+                if diplo in ("war", "war_pending") and (not is_planet or diplo == "war_pending"):
+                    # War fleet enters void, OR pre-war fleet enters any territory:
+                    # land normally but alert the territory owner.
+                    db.add(Event(
+                        type="enemy_fleet_entered_territory",
+                        payload={
+                            "fleet_id": fleet.id,
+                            "attacker_nation_id": fleet.nation_id,
+                            "defender_nation_id": dest_owner,
+                            "territory_id": dest_id,
+                            "node_key": dest.node_key,
+                            "unit_count": fleet.unit_count,
+                            "territory_type": dest.territory_type,
+                            "diplomacy_status": diplo,
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+                    # fall through to normal landing below
+
+            # Normal landing: merge into stationed or create new stationed fleet
+            existing = (
+                db.query(Fleet)
+                .filter(
+                    Fleet.nation_id == fleet.nation_id,
+                    Fleet.origin_territory == dest_id,
+                    Fleet.status == "stationed",
+                )
+                .first()
+            )
+            if existing:
+                existing.unit_count += fleet.unit_count
+                db.delete(fleet)
                 db.add(Event(
-                    type="fleet_arrived_at_enemy_territory",
+                    type="fleet_stationed",
                     payload={
-                        "fleet_id": fleet.id,
-                        "attacker_nation_id": fleet.nation_id,
-                        "defender_nation_id": dest.nation_id,
+                        "fleet_id": existing.id,
+                        "nation_id": fleet.nation_id,
                         "territory_id": dest_id,
-                        "node_key": dest.node_key,
-                        "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
-                        "tick_at": tick_at.isoformat(),
-                    },
-                    scheduled_for=tick_at,
-                    processed_at=tick_at,
-                    status="processed",
-                ))
-                db.add(Event(
-                    type="enemy_fleet_arrived",
-                    payload={
-                        "fleet_id": fleet.id,
-                        "attacker_nation_id": fleet.nation_id,
-                        "defender_nation_id": dest.nation_id,
-                        "territory_id": dest_id,
-                        "node_key": dest.node_key,
-                        "unit_count": fleet.unit_count,
-                        "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
+                        "territory_node_key": dest.node_key,
+                        "unit_count": existing.unit_count,
                         "tick_at": tick_at.isoformat(),
                     },
                     scheduled_for=tick_at,
@@ -195,52 +360,25 @@ def run_tick():
                     status="processed",
                 ))
             else:
-                existing = (
-                    db.query(Fleet)
-                    .filter(
-                        Fleet.nation_id == fleet.nation_id,
-                        Fleet.origin_territory == dest_id,
-                        Fleet.status == "stationed",
-                    )
-                    .first()
-                )
-                if existing:
-                    existing.unit_count += fleet.unit_count
-                    db.delete(fleet)
-                    db.add(Event(
-                        type="fleet_stationed",
-                        payload={
-                            "fleet_id": existing.id,
-                            "nation_id": fleet.nation_id,
-                            "territory_id": dest_id,
-                            "territory_node_key": dest.node_key,
-                            "unit_count": existing.unit_count,
-                            "tick_at": tick_at.isoformat(),
-                        },
-                        scheduled_for=tick_at,
-                        processed_at=tick_at,
-                        status="processed",
-                    ))
-                else:
-                    fleet.status = "stationed"
-                    fleet.origin_territory = dest_id
-                    fleet.destination_territory = None
-                    fleet.arrives_at = None
-                    fleet.departs_at = None
-                    db.add(Event(
-                        type="fleet_stationed",
-                        payload={
-                            "fleet_id": fleet.id,
-                            "nation_id": fleet.nation_id,
-                            "territory_id": dest_id,
-                            "territory_node_key": dest.node_key,
-                            "unit_count": fleet.unit_count,
-                            "tick_at": tick_at.isoformat(),
-                        },
-                        scheduled_for=tick_at,
-                        processed_at=tick_at,
-                        status="processed",
-                    ))
+                fleet.status = "stationed"
+                fleet.origin_territory = dest_id
+                fleet.destination_territory = None
+                fleet.arrives_at = None
+                fleet.departs_at = None
+                db.add(Event(
+                    type="fleet_stationed",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "nation_id": fleet.nation_id,
+                        "territory_id": dest_id,
+                        "territory_node_key": dest.node_key,
+                        "unit_count": fleet.unit_count,
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
 
         # Process expired confirmation windows
         expired_confirmation = (
@@ -381,6 +519,44 @@ def run_tick():
                         processed_at=tick_at,
                         status="processed",
                     ))
+
+        # Apply attrition to holding fleets: max(1, round(unit_count * 0.01)) losses per tick
+        holding_fleets = (
+            db.query(Fleet)
+            .filter(Fleet.status == "holding")
+            .all()
+        )
+        for fleet in holding_fleets:
+            losses = max(1, round(fleet.unit_count * 0.01))
+            remaining = fleet.unit_count - losses
+            if remaining <= 0:
+                db.add(Event(
+                    type="fleet_destroyed_by_attrition",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "nation_id": fleet.nation_id,
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
+                db.delete(fleet)
+            else:
+                fleet.unit_count = remaining
+                db.add(Event(
+                    type="holding_fleet_attrition",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "nation_id": fleet.nation_id,
+                        "losses": losses,
+                        "remaining": remaining,
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
 
         # Land in-transit colony ships that have arrived
         arrived_colony_ships = (

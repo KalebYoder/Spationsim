@@ -58,6 +58,7 @@ def get_probe_stats(
         reserve=nation.probes_reserve,
         manufacture_cost_minerals=PROBE_STATS["manufacture_cost_minerals"],
         manufacture_cost_fuel=PROBE_STATS["manufacture_cost_fuel"],
+        manufacture_cost_currency=PROBE_STATS["manufacture_cost_currency"],
     )
 
 
@@ -82,12 +83,14 @@ def manufacture_probes(
 
     mineral_cost = PROBE_STATS["manufacture_cost_minerals"] * body.quantity
     fuel_cost = PROBE_STATS["manufacture_cost_fuel"] * body.quantity
+    currency_cost = PROBE_STATS["manufacture_cost_currency"] * body.quantity
 
-    if nation.minerals < mineral_cost or nation.fuel < fuel_cost:
+    if nation.minerals < mineral_cost or nation.fuel < fuel_cost or nation.currency < currency_cost:
         raise HTTPException(status_code=409, detail="Insufficient resources")
 
     nation.minerals -= mineral_cost
     nation.fuel -= fuel_cost
+    nation.currency -= currency_cost
     nation.probes_reserve += body.quantity
 
     db.commit()

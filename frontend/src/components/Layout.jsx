@@ -5,15 +5,17 @@ import { useNation } from '../hooks/useNation'
 import ChatWindow from './ChatWindow'
 
 const NAV = [
-  { to: '/',           label: 'Nation',     end: true  },
-  { to: '/economy',    label: 'Economy'               },
-  { to: '/facilities', label: 'Facilities'            },
-  { to: '/military',   label: 'Military'              },
-  { to: '/probes',     label: 'Probes'                },
-  { to: '/planets',    label: 'Planets'               },
-  { to: '/map',        label: 'Map'                   },
-  { to: '/diplomacy',  label: 'Diplomacy'             },
-  { to: '/mail',       label: 'Mail',      badge: true },
+  { to: '/',           label: 'Nation',     end: true         },
+  { to: '/economy',    label: 'Economy'                       },
+  { to: '/facilities', label: 'Facilities'                    },
+  { to: '/military',   label: 'Military'                      },
+  { to: '/probes',     label: 'Probes'                        },
+  { to: '/planets',    label: 'Planets'                       },
+  { to: '/map',        label: 'Map'                           },
+  { to: '/diplomacy',  label: 'Diplomacy'                     },
+  { to: '/friends',    label: 'Friends',    friendBadge: true },
+  { to: '/mail',       label: 'Mail',       badge: true       },
+  { to: '/log',        label: 'Event Log'                     },
 ]
 
 const navLinkStyle = ({ isActive }) => ({
@@ -32,6 +34,7 @@ export default function Layout() {
   const { player, logout } = useAuth()
   const { nation } = useNation()
   const [mailUnread, setMailUnread] = useState(0)
+  const [friendPending, setFriendPending] = useState(0)
 
   useEffect(() => {
     const fetchUnread = () => {
@@ -44,6 +47,22 @@ export default function Layout() {
     const id = setInterval(fetchUnread, 30000)
     return () => clearInterval(id)
   }, [])
+
+  useEffect(() => {
+    if (!nation) return
+    const fetchFriendPending = () => {
+      fetch('/api/diplomacy/friends', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => {
+          const incoming = data.filter(e => e.status === 'friend_pending' && e.requested_by !== nation.id).length
+          setFriendPending(incoming)
+        })
+        .catch(() => {})
+    }
+    fetchFriendPending()
+    const id = setInterval(fetchFriendPending, 60000)
+    return () => clearInterval(id)
+  }, [nation])
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -99,7 +118,7 @@ export default function Layout() {
 
         {/* Nav links */}
         <div style={{ flex: 1, padding: '0 8px' }}>
-          {NAV.map(({ to, label, end, badge }) => (
+          {NAV.map(({ to, label, end, badge, friendBadge }) => (
             <NavLink key={to} to={to} end={end} style={navLinkStyle}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 {label}
@@ -114,6 +133,19 @@ export default function Layout() {
                     lineHeight: 1.4,
                   }}>
                     {mailUnread}
+                  </span>
+                )}
+                {friendBadge && friendPending > 0 && (
+                  <span style={{
+                    background: '#5a8a62',
+                    color: '#fff',
+                    borderRadius: 10,
+                    padding: '1px 6px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    lineHeight: 1.4,
+                  }}>
+                    {friendPending}
                   </span>
                 )}
               </span>

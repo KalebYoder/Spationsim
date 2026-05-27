@@ -1,80 +1,67 @@
-import { useState } from 'react'
-import { PageHeader, Card, SectionLabel, EmptyState, Table, Tr, Td, Badge, Btn } from '../components/ui'
+import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useNation } from '../hooks/useNation'
+import { diploColor } from '../hooks/useDiplomacy'
+import { PageHeader, Card, SectionLabel, EmptyState, Table, Tr, Td, Badge } from '../components/ui'
 
-const STATUS_COLORS = { allied: 'teal', neutral: 'muted', hostile: 'danger', war: 'danger' }
+const STATUS_COLOR = {
+  war:      { label: 'War',      color: '#c0726a' },
+  friendly: { label: 'Friendly', color: '#6aab72' },
+  neutral:  { label: 'Neutral',  color: '#b8a98a' },
+}
 
 export default function Diplomacy() {
-  const [defaultStance, setDefaultStance] = useState('neutral')
+  const { nation } = useNation()
+  const navigate = useNavigate()
+  const [relations, setRelations] = useState([])
+
+  const loadRelations = useCallback(async () => {
+    const r = await fetch('/api/diplomacy/relations', { credentials: 'include' })
+    if (r.ok) setRelations(await r.json())
+  }, [])
+
+  useEffect(() => { loadRelations() }, [loadRelations])
 
   return (
     <div>
       <PageHeader
         title="Diplomacy"
-        sub="Relationships, war declarations, and standing diplomatic status"
+        sub="Your active diplomatic relationships. Visit a nation's profile to change status."
       />
 
-      {/* Default stance */}
-      <SectionLabel>Default Stance</SectionLabel>
-      <Card style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <div style={{ fontWeight: 500, marginBottom: 4 }}>Default diplomatic status for new nations</div>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-            Applied to any nation you have no explicit relationship with
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {['neutral', 'hostile'].map(stance => (
-            <button
-              key={stance}
-              onClick={() => setDefaultStance(stance)}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 'var(--radius-sm)',
-                border: `1px solid ${defaultStance === stance ? 'var(--amber)' : 'var(--border)'}`,
-                background: defaultStance === stance ? 'var(--amber-dim)' : 'transparent',
-                color: defaultStance === stance ? 'var(--amber)' : 'var(--text-secondary)',
-                fontSize: 13,
-                cursor: 'pointer',
-                textTransform: 'capitalize',
-              }}
-            >
-              {stance}
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      {/* Active wars */}
-      <SectionLabel>Active Wars</SectionLabel>
+      <SectionLabel>Active Relationships</SectionLabel>
       <Card style={{ padding: 0 }}>
-        <Table headers={['Nation', 'Declared', 'Aggressor', 'Duration', 'Resource Drain', 'Actions']}>
-          <Tr>
-            <Td colSpan={6} style={{ textAlign: 'center', padding: '40px 0' }}>
-              <EmptyState title="No active wars" />
-            </Td>
-          </Tr>
+        <Table headers={['Nation', 'Status', 'Since']}>
+          {relations.length === 0 ? (
+            <Tr>
+              <Td colSpan={3} style={{ textAlign: 'center', padding: '40px 0' }}>
+                <EmptyState title="All nations are neutral" body="Visit a nation's profile to set a relationship." />
+              </Td>
+            </Tr>
+          ) : relations.map(r => {
+            const s = STATUS_COLOR[r.status] || STATUS_COLOR.neutral
+            return (
+              <Tr
+                key={r.nation_id}
+                onClick={() => navigate(`/nations/${r.nation_id}`)}
+                style={{ cursor: 'pointer' }}
+              >
+                <Td>
+                  <span style={{ fontWeight: 500, color: diploColor(r.status) }}>{r.nation_name}</span>
+                </Td>
+                <Td>
+                  <span style={{ color: s.color, fontWeight: 600, fontSize: 13 }}>{s.label}</span>
+                </Td>
+                <Td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                  {new Date(r.updated_at).toLocaleDateString()}
+                </Td>
+              </Tr>
+            )
+          })}
         </Table>
       </Card>
 
-      {/* Explicit relationships */}
-      <SectionLabel>Diplomatic Relationships</SectionLabel>
-      <Card style={{ padding: 0 }}>
-        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
-          <Btn variant="ghost" disabled>Set Status</Btn>
-        </div>
-        <Table headers={['Nation', 'Status', 'Updated', 'Actions']}>
-          <Tr>
-            <Td colSpan={4} style={{ textAlign: 'center', padding: '40px 0' }}>
-              <EmptyState
-                title="No explicit relationships"
-                body="All nations default to your default stance unless overridden here."
-              />
-            </Td>
-          </Tr>
-        </Table>
-      </Card>
-
-      {/* Alliance section — placeholder for post-beta */}
+      {/* Alliances — post-beta placeholder */}
       <SectionLabel>Alliances</SectionLabel>
       <Card style={{ opacity: 0.5 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -86,34 +73,6 @@ export default function Diplomacy() {
             </div>
           </div>
           <Badge color="muted">Post-Beta</Badge>
-        </div>
-      </Card>
-
-      {/* War declaration */}
-      <SectionLabel>Declare War</SectionLabel>
-      <Card>
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontWeight: 500, marginBottom: 6 }}>War requires a formal declaration</div>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-            Declaring war enables fleet combat against the target nation. The target nation is notified immediately.
-            Fleets still require a 4-hour confirmation window on arrival — no instant strikes.
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <input
-            type="text"
-            placeholder="Nation name&hellip;"
-            disabled
-            style={{
-              flex: 1,
-              padding: '8px 12px',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--border)',
-              background: 'var(--bg-surface)',
-              color: 'var(--text-primary)',
-            }}
-          />
-          <Btn variant="danger" disabled>Declare War</Btn>
         </div>
       </Card>
     </div>

@@ -145,6 +145,22 @@ export default function Home() {
         <StatCard label="Military" value="—" sub="units" />
       </div>
 
+      <SectionLabel>Power</SectionLabel>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
+        <StatCard
+          label="Military Strength"
+          value={fmt(nation?.military_strength)}
+          sub="1 per fighter"
+          accent="var(--danger, #c0726a)"
+        />
+        <StatCard
+          label="Industrial Strength"
+          value={fmt(nation?.industrial_strength)}
+          sub="mines +1 · refineries +1 · shipyards +2"
+          accent="var(--teal)"
+        />
+      </div>
+
       <SectionLabel>Vacation Mode</SectionLabel>
       <VacationPanel nation={nation} onRefresh={load} />
 

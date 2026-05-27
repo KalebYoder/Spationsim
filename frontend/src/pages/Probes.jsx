@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNation } from '../hooks/useNation'
+import { useDiplomacy } from '../hooks/useDiplomacy'
 import { Card, SectionLabel, EmptyState, Table, Tr, Td, Btn, StatCard } from '../components/ui'
 
 const HEX_SIZE = 9
@@ -46,6 +47,7 @@ function ManufactureForm({ stats, onManufactured, onCancel }) {
 
   const mineralCost = stats.manufacture_cost_minerals * quantity
   const fuelCost = stats.manufacture_cost_fuel * quantity
+  const currencyCost = stats.manufacture_cost_currency * quantity
 
   const handleBuild = async () => {
     setSubmitting(true)
@@ -87,7 +89,7 @@ function ManufactureForm({ stats, onManufactured, onCancel }) {
           />
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-secondary)', paddingBottom: 2 }}>
-          Cost: {mineralCost} minerals, {fuelCost} fuel
+          Cost: {mineralCost} minerals · {fuelCost} fuel · {currencyCost} currency
         </div>
         <div style={{ display: 'flex', gap: 8, paddingBottom: 2 }}>
           <Btn variant="amber" onClick={handleBuild} disabled={submitting}>{submitting ? 'Building…' : 'Manufacture'}</Btn>
@@ -242,7 +244,7 @@ function LaunchMap({ territories, nationId, onLaunched, onCancel }) {
         {tooltip && !tooltip.territory_type === 'void' && (
           <>
             <strong style={{ color: 'var(--text-primary)' }}>{tooltip.node_key}</strong>
-            {tooltip.nation_name && <> — <span style={{ color: 'var(--purple)' }}>{tooltip.nation_name}</span></>}
+            {tooltip.nation_name && <> — <span style={{ color: tooltip.nation_id === nation?.id ? 'var(--teal)' : colorOf(tooltip.nation_id) }}>{tooltip.nation_name}</span></>}
           </>
         )}
       </div>
@@ -286,6 +288,7 @@ function LaunchMap({ territories, nationId, onLaunched, onCancel }) {
 
 export default function Probes() {
   const { nation } = useNation()
+  const { colorOf } = useDiplomacy()
   const [stats, setStats] = useState(null)
   const [nationData, setNationData] = useState(null)
   const [activeProbes, setActiveProbes] = useState([])
@@ -428,7 +431,7 @@ export default function Probes() {
                 <Td muted>{fmtAgo(pd.discovered_at)}</Td>
                 <Td>
                   {pd.is_colonized
-                    ? <span style={{ color: 'var(--purple)' }}>Colonized{pd.nation_name ? ` by ${pd.nation_name}` : ''}</span>
+                    ? <span style={{ color: pd.nation_id === nation?.id ? 'var(--teal)' : colorOf(pd.nation_id) }}>Colonized{pd.nation_name ? ` by ${pd.nation_name}` : ''}</span>
                     : <span style={{ color: 'var(--text-muted)' }}>Unclaimed</span>
                   }
                 </Td>

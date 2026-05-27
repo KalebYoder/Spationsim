@@ -1,4 +1,6 @@
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.infrastructure import Infrastructure
@@ -7,13 +9,18 @@ from ..models.territory import Territory
 from ..models.player import Player
 from ..schemas.nation import InfrastructureBuildRequest, InfrastructureResponse
 from ..routers.auth import get_current_player
-from sqlalchemy import func
 from ..models.territory_population import TerritoryPopulation
-from ..constants import FACILITY_COSTS, FACILITY_POPULATION_COST
+from ..constants import (
+    FACILITY_COSTS,
+    FACILITY_POPULATION_COST,
+    FACILITY_BUILD_TICKS,
+    DEMOLISH_TICKS,
+    DEMOLISH_REFUND_FRACTION,
+)
 
 router = APIRouter(prefix="/api/facilities", tags=["facilities"])
 
-COSTS = FACILITY_COSTS
+TICK_HOURS = 2
 
 
 def _to_response(infra: Infrastructure, territory: Territory) -> InfrastructureResponse:
@@ -25,7 +32,24 @@ def _to_response(infra: Infrastructure, territory: Territory) -> InfrastructureR
         type=infra.type,
         level=infra.level,
         built_at=infra.built_at.isoformat() if infra.built_at else None,
+        status=infra.status,
+        completes_at=infra.completes_at.isoformat() if infra.completes_at else None,
     )
+
+
+def _assigned_pop(nation_id: int, db: Session) -> int:
+    """Sum population cost of all active + under_construction facilities for a nation.
+    Demolishing facilities have already freed their workers."""
+    rows = (
+        db.query(Infrastructure)
+        .join(Territory, Infrastructure.territory_id == Territory.id)
+        .filter(
+            Territory.nation_id == nation_id,
+            Infrastructure.status.in_(["active", "under_construction"]),
+        )
+        .all()
+    )
+    return sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in rows)
 
 
 @router.get("", response_model=list[InfrastructureResponse])
@@ -58,11 +82,16 @@ def build_facility(
     territory = db.get(Territory, body.territory_id)
     if not territory or territory.nation_id != nation.id:
         raise HTTPException(status_code=403, detail="You do not control this territory")
-    if territory.territory_type == 'void':
+    if territory.territory_type == "void":
         raise HTTPException(status_code=409, detail="Cannot build facilities in void space")
 
-    cost = COSTS[body.type]
-    if nation.minerals < cost["minerals"] or nation.fuel < cost["fuel"]:
+    cost = FACILITY_COSTS[body.type]
+    currency_cost = cost.get("currency", 0)
+    if (
+        nation.minerals < cost["minerals"]
+        or nation.fuel < cost["fuel"]
+        or nation.currency < currency_cost
+    ):
         raise HTTPException(status_code=409, detail="Insufficient resources")
 
     pop_cost = FACILITY_POPULATION_COST.get(body.type, 0)
@@ -71,17 +100,12 @@ def build_facility(
             t_id for (t_id,) in
             db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
         ]
-        total_pop = db.query(func.sum(TerritoryPopulation.current)).filter(
-            TerritoryPopulation.territory_id.in_(territory_ids)
-        ).scalar() or 0
-        existing_facilities = (
-            db.query(Infrastructure)
-            .join(Territory, Infrastructure.territory_id == Territory.id)
-            .filter(Territory.nation_id == nation.id)
-            .all()
+        total_pop = int(
+            db.query(func.sum(TerritoryPopulation.current))
+            .filter(TerritoryPopulation.territory_id.in_(territory_ids))
+            .scalar() or 0
         )
-        assigned_pop = sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in existing_facilities)
-        unassigned = int(total_pop) - assigned_pop
+        unassigned = total_pop - _assigned_pop(nation.id, db)
         if unassigned < pop_cost:
             raise HTTPException(
                 status_code=409,
@@ -90,9 +114,51 @@ def build_facility(
 
     nation.minerals -= cost["minerals"]
     nation.fuel -= cost["fuel"]
+    nation.currency -= currency_cost
 
-    infra = Infrastructure(territory_id=territory.id, type=body.type)
+    build_ticks = FACILITY_BUILD_TICKS.get(body.type, 1)
+    completes_at = datetime.now(timezone.utc) + timedelta(hours=build_ticks * TICK_HOURS)
+
+    infra = Infrastructure(
+        territory_id=territory.id,
+        type=body.type,
+        status="under_construction",
+        completes_at=completes_at,
+    )
     db.add(infra)
+    db.commit()
+    db.refresh(infra)
+    return _to_response(infra, territory)
+
+
+@router.post("/{facility_id}/demolish", response_model=InfrastructureResponse)
+def demolish_facility(
+    facility_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    infra = db.get(Infrastructure, facility_id)
+    if not infra:
+        raise HTTPException(status_code=404, detail="Facility not found")
+
+    territory = db.get(Territory, infra.territory_id)
+    if not territory or territory.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="You do not control this territory")
+
+    if infra.status != "active":
+        raise HTTPException(
+            status_code=409,
+            detail="Only active facilities can be demolished",
+        )
+
+    completes_at = datetime.now(timezone.utc) + timedelta(hours=DEMOLISH_TICKS * TICK_HOURS)
+    infra.status = "demolishing"
+    infra.completes_at = completes_at
+
     db.commit()
     db.refresh(infra)
     return _to_response(infra, territory)

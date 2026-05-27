@@ -13,6 +13,7 @@ class ResourceLog(Base):
     minerals_delta = Column(Numeric(12, 2))
     fuel_delta = Column(Numeric(12, 2))
     population_delta = Column(Integer)
+    currency_delta = Column(Numeric(12, 2))
 
     nation = relationship("Nation", back_populates="resource_logs")
 

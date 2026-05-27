@@ -51,6 +51,8 @@ class NationResponse(BaseModel):
     fuel: float
     currency: float
     probes_reserve: int
+    military_strength: int
+    industrial_strength: int
     vacation_mode: bool
     vacation_since: str | None
     aggression_lockout_until: str | None
@@ -65,6 +67,8 @@ class PublicNationResponse(BaseModel):
     currency_name: str
     territory_count: int
     military: dict[str, int]
+    military_strength: int
+    industrial_strength: int
     vacation_mode: bool
     vacation_since: str | None
 
@@ -187,6 +191,7 @@ class UnitStatsResponse(BaseModel):
     nodes_per_tick: int
     manufacture_cost_minerals: int
     manufacture_cost_fuel: int
+    manufacture_cost_currency: int
 
 
 class ProbeStatsResponse(BaseModel):
@@ -194,6 +199,7 @@ class ProbeStatsResponse(BaseModel):
     reserve: int
     manufacture_cost_minerals: int
     manufacture_cost_fuel: int
+    manufacture_cost_currency: int
 
 
 class TerritoryResponse(BaseModel):
@@ -228,6 +234,8 @@ class InfrastructureResponse(BaseModel):
     type: str
     level: int
     built_at: str | None
+    status: str
+    completes_at: str | None
 
     model_config = {"from_attributes": True}
 

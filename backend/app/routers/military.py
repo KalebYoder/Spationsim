@@ -25,7 +25,7 @@ from ..schemas.nation import (
     UnitStatsResponse,
 )
 from ..routers.auth import get_current_player
-from ..routers.diplomacy import is_at_war
+from ..routers.diplomacy import is_at_war, get_diplomacy_status
 from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST
 
 router = APIRouter(prefix="/api/military", tags=["military"])
@@ -86,7 +86,10 @@ def _nation_pop_stats(nation_id: int, db: Session) -> tuple[int, int]:
     facilities = (
         db.query(Infrastructure)
         .join(Territory, Infrastructure.territory_id == Territory.id)
-        .filter(Territory.nation_id == nation_id)
+        .filter(
+            Territory.nation_id == nation_id,
+            Infrastructure.status.in_(["active", "under_construction"]),
+        )
         .all()
     )
     assigned = sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in facilities)
@@ -110,6 +113,7 @@ def get_units(
             nodes_per_tick=stats["nodes_per_tick"],
             manufacture_cost_minerals=stats["manufacture_cost_minerals"],
             manufacture_cost_fuel=stats["manufacture_cost_fuel"],
+            manufacture_cost_currency=stats["manufacture_cost_currency"],
         )
         for unit_type, stats in UNIT_STATS.items()
     ]
@@ -155,8 +159,9 @@ def manufacture_starfighter(
     stats = UNIT_STATS["starfighter"]
     mineral_cost = stats["manufacture_cost_minerals"] * body.quantity
     fuel_cost = stats["manufacture_cost_fuel"] * body.quantity
+    currency_cost = stats["manufacture_cost_currency"] * body.quantity
 
-    if nation.minerals < mineral_cost or nation.fuel < fuel_cost:
+    if nation.minerals < mineral_cost or nation.fuel < fuel_cost or nation.currency < currency_cost:
         raise HTTPException(status_code=409, detail="Insufficient resources")
 
     total_pop, assigned_pop = _nation_pop_stats(nation.id, db)
@@ -187,6 +192,7 @@ def manufacture_starfighter(
 
     nation.minerals -= mineral_cost
     nation.fuel -= fuel_cost
+    nation.currency -= currency_cost
 
     # Add to existing stationed fleet at this territory or create one
     stationed = (
@@ -236,13 +242,16 @@ def send_fleet(
     if body.from_territory_id == body.to_territory_id:
         raise HTTPException(status_code=409, detail="Origin and destination must differ")
 
-    # Block dispatch to another nation's territory without a war declaration
+    # Gate dispatch by diplomacy status and destination territory type
     if dest.nation_id and dest.nation_id != nation.id:
-        if not is_at_war(db, nation.id, dest.nation_id):
+        diplo = get_diplomacy_status(db, nation.id, dest.nation_id)
+        is_planet = dest.territory_type != "void"
+        if diplo in ("neutral", "friend_pending") and is_planet:
             raise HTTPException(
                 status_code=409,
-                detail="War declaration required to dispatch fleets to enemy territory",
+                detail="Cannot dispatch fleets to a neutral nation's territory. War declaration required.",
             )
+        # war, war_pending, and friendly all allow dispatch; neutral/friend_pending allows void only
 
     stationed = (
         db.query(Fleet)
@@ -422,17 +431,37 @@ def claim_territory(
         raise HTTPException(status_code=409, detail="Territory is already claimed")
 
     now = datetime.now(timezone.utc)
+    former_owner_id = territory.nation_id
     territory.is_colonized = True
     territory.nation_id = nation.id
     territory.colonized_at = now
 
     db.add(Event(
         type="territory_claimed",
-        payload={"nation_id": nation.id, "territory_id": territory.id, "node_key": territory.node_key},
+        payload={
+            "nation_id": nation.id,
+            "territory_id": territory.id,
+            "node_key": territory.node_key,
+            "former_nation_id": former_owner_id,
+        },
         scheduled_for=now,
         processed_at=now,
         status="processed",
     ))
+
+    if former_owner_id is not None:
+        db.add(Event(
+            type="territory_lost",
+            payload={
+                "nation_id": former_owner_id,
+                "claimed_by_nation_id": nation.id,
+                "territory_id": territory.id,
+                "node_key": territory.node_key,
+            },
+            scheduled_for=now,
+            processed_at=now,
+            status="processed",
+        ))
 
     db.commit()
     db.refresh(territory)
@@ -677,7 +706,6 @@ def unload_colony_ship(
         db.add(TerritoryPopulation(
             territory_id=territory.id,
             current=quantity,
-            growth_rate=0.01,
             last_updated=datetime.now(timezone.utc),
         ))
 

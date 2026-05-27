@@ -3,11 +3,36 @@ import { useNation } from '../hooks/useNation'
 import { Card, SectionLabel, EmptyState, Tr, Td, Badge, Btn, StatCard } from '../components/ui'
 
 const FACILITY_TYPES = [
-  { value: 'mine',            label: 'Mine',            cost: { minerals: 20, fuel:  10 } },
-  { value: 'refinery',        label: 'Refinery',        cost: { minerals: 10, fuel:  20 } },
-  { value: 'shipyard', label: 'Shipyard', cost: { minerals: 50, fuel: 20 } },
-  { value: 'probe_factory',   label: 'Probe Factory',   cost: { minerals: 10, fuel:   5 } },
+  { value: 'mine',          label: 'Mine',         cost: { minerals:  60, fuel:  30, currency:  500 }, buildTicks: 1 },
+  { value: 'refinery',      label: 'Refinery',     cost: { minerals:  30, fuel:  60, currency:  500 }, buildTicks: 1 },
+  { value: 'shipyard',      label: 'Shipyard',     cost: { minerals: 150, fuel:  60, currency: 2000 }, buildTicks: 2 },
+  { value: 'probe_factory', label: 'Probe Factory',cost: { minerals:  30, fuel:  15 },                 buildTicks: 1 },
 ]
+
+const TYPE_LABEL = { mine: 'Mine', refinery: 'Refinery', shipyard: 'Shipyard', probe_factory: 'Probe Factory' }
+
+function statusBadgeColor(status) {
+  if (status === 'active') return 'teal'
+  if (status === 'under_construction') return 'amber'
+  return 'danger'
+}
+
+function statusLabel(status) {
+  if (status === 'active') return 'Active'
+  if (status === 'under_construction') return 'Building'
+  if (status === 'demolishing') return 'Demolishing'
+  return status
+}
+
+function CountdownCell({ isoTs }) {
+  const end = new Date(isoTs).getTime()
+  const now = Date.now()
+  const ms = end - now
+  if (ms <= 0) return <span style={{ color: 'var(--teal)' }}>this tick</span>
+  const h = Math.floor(ms / 3_600_000)
+  const m = Math.floor((ms % 3_600_000) / 60_000)
+  return <span style={{ color: 'var(--text-muted)' }}>{h}h {m}m</span>
+}
 
 function BuildForm({ territories, nation, onBuilt }) {
   const [territoryId, setTerritoryId] = useState(territories[0]?.id ?? '')
@@ -16,7 +41,7 @@ function BuildForm({ territories, nation, onBuilt }) {
   const [error, setError] = useState('')
 
   const selected = FACILITY_TYPES.find(f => f.value === type)
-  const canAfford = nation.minerals >= selected.cost.minerals && nation.fuel >= selected.cost.fuel
+  const canAfford = nation.minerals >= selected.cost.minerals && nation.fuel >= selected.cost.fuel && (nation.currency ?? 0) >= (selected.cost.currency ?? 0)
 
   const handleBuild = async () => {
     setSubmitting(true)
@@ -66,20 +91,20 @@ function BuildForm({ territories, nation, onBuilt }) {
           </select>
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-secondary)', paddingBottom: 2 }}>
-          Cost: <span style={{ color: canAfford ? 'var(--text-primary)' : 'var(--danger)' }}>
-            {selected.cost.minerals} minerals, {selected.cost.fuel} fuel
-          </span>
+          <div>Cost: <span style={{ color: canAfford ? 'var(--text-primary)' : 'var(--danger)' }}>
+            {selected.cost.minerals} minerals · {selected.cost.fuel} fuel{selected.cost.currency ? ` · ${selected.cost.currency} currency` : ''}
+          </span></div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>
+            Builds in {selected.buildTicks} tick{selected.buildTicks !== 1 ? 's' : ''} · {selected.buildTicks * 2}h
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 8, paddingBottom: 2 }}>
           <Btn variant="amber" onClick={handleBuild} disabled={submitting || !canAfford}>
-            {submitting ? 'Building…' : 'Build'}
+            {submitting ? 'Queuing…' : 'Build'}
           </Btn>
         </div>
       </div>
       {error && <p style={{ color: 'var(--danger)', fontSize: 13, marginTop: 10 }}>{error}</p>}
-      {!canAfford && (
-        <p style={{ color: 'var(--danger)', fontSize: 13, marginTop: 10 }}>Insufficient resources</p>
-      )}
     </Card>
   )
 }
@@ -91,6 +116,8 @@ export default function Facilities() {
   const [territories, setTerritories] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [demolishing, setDemolishing] = useState(null)
+  const [demolishError, setDemolishError] = useState('')
   const [sortKey, setSortKey] = useState(null)
   const [sortAsc, setSortAsc] = useState(true)
 
@@ -118,23 +145,39 @@ export default function Facilities() {
 
   useEffect(() => { if (!nationLoading) load() }, [nationLoading])
 
-  const handleBuilt = newFacility => {
-    setFacilities(fs => [...fs, newFacility])
-    load()
+  const handleBuilt = () => load()
+
+  const handleDemolish = async (facilityId) => {
+    setDemolishing(facilityId)
+    setDemolishError('')
+    try {
+      const r = await fetch(`/api/facilities/${facilityId}/demolish`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await r.json()
+      if (!r.ok) { setDemolishError(data.detail || 'Demolish failed'); return }
+      setFacilities(fs => fs.map(f => f.id === facilityId ? data : f))
+    } catch {
+      setDemolishError('Network error')
+    } finally {
+      setDemolishing(null)
+    }
   }
 
   if (nationLoading || loading) return <p style={{ color: 'var(--text-muted)' }}>Loading&hellip;</p>
 
-  const typeLabel = { mine: 'Mine', refinery: 'Refinery', shipyard: 'Shipyard', probe_factory: 'Probe Factory' }
-
   const COLUMNS = [
-    { key: 'type',      label: 'Type',      compare: (a, b) => (typeLabel[a.type] || a.type).localeCompare(typeLabel[b.type] || b.type) },
+    { key: 'type',      label: 'Type',      compare: (a, b) => (TYPE_LABEL[a.type] || a.type).localeCompare(TYPE_LABEL[b.type] || b.type) },
     { key: 'territory', label: 'Territory', compare: (a, b) => (a.territory_name || a.territory_node_key).localeCompare(b.territory_name || b.territory_node_key) },
+    { key: 'status',    label: 'Status',    compare: (a, b) => a.status.localeCompare(b.status) },
+    { key: 'completes', label: 'Completes', compare: (a, b) => (a.completes_at || '').localeCompare(b.completes_at || '') },
     { key: 'level',     label: 'Level',     compare: (a, b) => a.level - b.level },
-    { key: 'built',     label: 'Built',     compare: (a, b) => (a.built_at || '').localeCompare(b.built_at || '') },
+    { key: 'actions',   label: '',          compare: () => 0 },
   ]
 
   const handleSort = key => {
+    if (key === 'actions') return
     if (sortKey === key) setSortAsc(a => !a)
     else { setSortKey(key); setSortAsc(true) }
   }
@@ -146,6 +189,9 @@ export default function Facilities() {
       })
     : facilities
 
+  const activeFacilities = facilities.filter(f => f.status === 'active').length
+  const inProgress = facilities.filter(f => f.status !== 'active').length
+
   return (
     <div>
       <div style={{ marginBottom: 28 }}>
@@ -156,7 +202,8 @@ export default function Facilities() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 14, marginBottom: 28 }}>
-        <StatCard label="Total Facilities" value={facilities.length} />
+        <StatCard label="Active Facilities" value={activeFacilities} />
+        {inProgress > 0 && <StatCard label="In Progress" value={inProgress} accent="var(--amber)" />}
         <StatCard label="Minerals" value={nation ? parseFloat(nation.minerals).toFixed(0) : '—'} accent="var(--amber)" />
         <StatCard label="Fuel" value={nation ? parseFloat(nation.fuel).toFixed(0) : '—'} accent="var(--teal)" />
       </div>
@@ -168,6 +215,7 @@ export default function Facilities() {
       <SectionLabel>All Facilities</SectionLabel>
 
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+      {demolishError && <p style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 8 }}>{demolishError}</p>}
 
       <Card style={{ padding: 0 }}>
         {facilities.length === 0 ? (
@@ -192,7 +240,7 @@ export default function Facilities() {
                         letterSpacing: '0.08em',
                         color: sortKey === col.key ? 'var(--text-primary)' : 'var(--text-muted)',
                         borderBottom: '1px solid var(--border)',
-                        cursor: 'pointer',
+                        cursor: col.key !== 'actions' ? 'pointer' : 'default',
                         userSelect: 'none',
                         whiteSpace: 'nowrap',
                       }}
@@ -208,10 +256,23 @@ export default function Facilities() {
               <tbody>
                 {sortedFacilities.map(f => (
                   <Tr key={f.id}>
-                    <Td><Badge color={f.type === 'mine' ? 'amber' : 'teal'}>{typeLabel[f.type] || f.type}</Badge></Td>
+                    <Td><Badge color={f.type === 'mine' ? 'amber' : 'teal'}>{TYPE_LABEL[f.type] || f.type}</Badge></Td>
                     <Td>{f.territory_name || f.territory_node_key}</Td>
+                    <Td><Badge color={statusBadgeColor(f.status)}>{statusLabel(f.status)}</Badge></Td>
+                    <Td muted>{f.completes_at ? <CountdownCell isoTs={f.completes_at} /> : '—'}</Td>
                     <Td muted>{f.level}</Td>
-                    <Td muted>{f.built_at ? new Date(f.built_at).toLocaleDateString() : '—'}</Td>
+                    <Td>
+                      {f.status === 'active' && (
+                        <Btn
+                          variant="ghost"
+                          onClick={() => handleDemolish(f.id)}
+                          disabled={demolishing === f.id}
+                          style={{ fontSize: 11, padding: '3px 10px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                        >
+                          {demolishing === f.id ? 'Queuing…' : 'Demolish'}
+                        </Btn>
+                      )}
+                    </Td>
                   </Tr>
                 ))}
               </tbody>
@@ -219,6 +280,10 @@ export default function Facilities() {
           </div>
         )}
       </Card>
+
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10 }}>
+        Demolishing returns 25% of build cost after 1 tick (2h). Only active facilities can be demolished.
+      </p>
     </div>
   )
 }

@@ -13,6 +13,7 @@ function ManufactureForm({ unit, shipyardTerritories, onManufactured, onCancel }
 
   const mineralCost = unit.manufacture_cost_minerals * quantity
   const fuelCost = unit.manufacture_cost_fuel * quantity
+  const currencyCost = unit.manufacture_cost_currency * quantity
 
   const handleBuild = async () => {
     if (!territoryId) { setError('Select a territory'); return }
@@ -57,7 +58,7 @@ function ManufactureForm({ unit, shipyardTerritories, onManufactured, onCancel }
           <input type="number" min={1} value={quantity} onChange={e => setQuantity(Math.max(1, parseInt(e.target.value) || 1))} style={INPUT_STYLE} />
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-secondary)', paddingBottom: 2 }}>
-          Cost: {mineralCost} minerals, {fuelCost} fuel
+          Cost: {mineralCost} minerals · {fuelCost} fuel · {currencyCost} currency
         </div>
         <div style={{ display: 'flex', gap: 8, paddingBottom: 2 }}>
           <Btn variant="amber" onClick={handleBuild} disabled={submitting}>{submitting ? 'Building…' : 'Manufacture'}</Btn>
@@ -329,7 +330,7 @@ export default function Military() {
                 <Td>{u.defense}</Td>
                 <Td>{u.hp}</Td>
                 <Td muted>{u.nodes_per_tick} node{u.nodes_per_tick !== 1 ? 's' : ''}/tick</Td>
-                <Td muted>{u.manufacture_cost_minerals}M / {u.manufacture_cost_fuel}F</Td>
+                <Td muted>{u.manufacture_cost_minerals}M / {u.manufacture_cost_fuel}F / {u.manufacture_cost_currency}¤</Td>
                 <Td>
                   {shipyardTerritories.length > 0 ? (
                     <Btn

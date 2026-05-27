@@ -3,6 +3,14 @@
 
 ---
 
+## Vocabulary
+
+- **Node** / **Territory** — interchangeable terms for a single point on the map. "Node" is preferred in technical/code contexts; "territory" is preferred in player-facing UI and game design writing.
+- **Planet** — any node with non-zero resource richness (mineral_richness > 0 or fuel_richness > 0). Planets can be colonized and developed.
+- **Void** — any node with zero resource richness (both mineral_richness = 0 and fuel_richness = 0). Void nodes cannot be colonized or developed, but can be claimed (ownership established without population). Claimed void nodes are primarily relevant for trade route control and wartime blockades.
+
+---
+
 ## Concept Summary
 
 A space-based browser nation simulator in the vein of CyberNations and Politics & War, differentiated by:
@@ -10,6 +18,7 @@ A space-based browser nation simulator in the vein of CyberNations and Politics 
 - Player-driven exploration and colonization mechanics
 - An information economy around probe/scout data
 - Timer mechanics designed to not punish players for having a life
+Possible name "Interstellar States"?
 
 Players control space-based nations. Territory exists on a shared map. Conflict arises naturally from resource scarcity and territorial ambition rather than being purely consensual.
 
@@ -101,6 +110,7 @@ Maintain a public roadmap. Be responsive to the player community. This is a diff
 - Shipyard replaces the earlier "fighter factory" concept — it builds both combat units and colony ships from a single facility
 - Production formula: `round(2 × territory_richness)` per facility per tick
 - Each facility type has a population assignment cost (Mine: 10, Refinery: 10, Probe Factory: 20, Shipyard: 40)
+- **Facility construction costs include a currency component** alongside minerals and fuel. Currency is not the dominant cost at low tiers — new players should be able to build their first facilities quickly on 500 currency/tick income — but scales up for advanced facilities. Rationale: without a currency spending sink, players accumulate currency indefinitely and the probe data marketplace (Phase 5) loses its price anchor because buyers have unlimited supply.
 - Infrastructure has maintenance costs (post-beta: costs scale over time to cap maximum nation size)
 - Military units require infrastructure support on player territory (supply chain — post-beta)
 
@@ -199,7 +209,7 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 1. **No player-to-player interaction** — *(Partially fixed)* Chat (public channels + DMs) and mail system implemented. Trade and war declaration still pending.
 
-2. **No tick event log** — Players have a countdown but no record of what changed last tick. Standard: event log or last-tick summary showing production, population delta, probe arrivals.
+2. ~~**No tick event log**~~ — *(Implemented)* Event log page at `/log` shows per-tick resource deltas, population changes, probe arrivals, combat events, and construction completions.
 
 3. **No facility limits per territory** — No reason to hold more than one territory if facilities can stack infinitely at home. A population-capped center territory can staff 50 mines and generate 500 minerals/tick from a single tile, outpacing any design intent. Needs a per-territory slot cap.
 
@@ -305,12 +315,19 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 | Territory rename cooldown | 24 hours (12 ticks) | Prevents mid-war map confusion via rapid renames. Error response includes exact time remaining. |
 | Map generation | Dynamic, probe-driven; integer richness 1–5 | Seeder creates full cluster + 6-hex void ring per cluster. Probes dynamically generate territory rows for uncharted hexes they scan. Richness weighted: 75% chance of 5 at cluster center, 75% chance of 1 at rim, linear slide. Void-zone hexes have 1/1000 chance of becoming an anomaly node (5–10 richness in one resource, 0 in the other). |
 
+## Future Concerns
+
+- **Holding fleet attrition rate**: Currently set to `max(1, round(unit_count × 0.01))` — 1% per tick with a minimum of 1 unit. This means a 1-unit fleet lasts exactly 1 tick; a 100-unit fleet lasts ~100 ticks (~200 hours). Monitor during beta to determine whether this rate discourages aggressive play too strongly or allows fleets to lurk too long. If fleets are disappearing before players can act, reduce to 0.5% or increase the minimum loss threshold. If lurking remains a problem, increase to 2%.
+
+---
+
 ## Open Questions
 
 - Does population die permanently in combat, or does it reduce and recover? (Significant design weight — bring to veteran players)
 - Population growth rate tuning and whether specific infrastructure types (beyond mines/refineries) should influence it.
 - Whether colony vulnerability window (low population, low development) creates enough natural strategic depth or needs explicit mechanics.
 - **Vacation mode as a territory blocker**: a player in vacation mode indefinitely still denies staging ground during alliance wars. The 48h lockout solves rapid in/out exploitation but not a committed long-term blocker. Possible solutions (not yet designed): war-declaration entry block; minimum fleet-presence requirement to invoke vacation; admin enforcement. Defer until beta feedback confirms whether this is a real problem in practice.
+- **Defender repositioning during war declaration window**: when war is declared, both nations enter a 2-tick (4-hour) grace period before hostilities begin. During this window a defender who sees the `war_declared` notification can freely withdraw fleets, consolidate defenses, and reposition units — potentially negating any element of surprise and making offensive declarations weaker than intended. Possible mitigations: freeze fleet movement for both parties during the window; only restrict the attacker's fleet movement; apply a "mobilization" phase where both sides can reinforce but not reposition out of their own territory; limit the window to first-ever war declarations. No decision made — bring to veteran players during closed beta.
 
 ---
 

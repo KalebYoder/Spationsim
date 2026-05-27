@@ -4,6 +4,14 @@ This is a space-based browser nation simulator currently in active development. 
 
 ---
 
+## Vocabulary
+
+- **Node** / **Territory** — interchangeable; same thing. "Node" preferred in code, "territory" in UI/design writing.
+- **Planet** — any node where mineral_richness > 0 or fuel_richness > 0. Can be colonized.
+- **Void** — any node where both mineral_richness = 0 and fuel_richness = 0. Cannot be colonized or developed, but can be claimed (ownership without population). Intended use: trade route control and wartime blockades.
+
+---
+
 ## What This Game Is
 
 A persistent multiplayer browser game where players control space-based nations on a shared map. Players expand through exploration and colonization, compete for resources, and engage in diplomacy and combat. Inspired by CyberNations and Politics & War but differentiated by player-friendly timer mechanics and an exploration/information economy.
@@ -73,6 +81,7 @@ CREATE TABLE nations (
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     minerals        NUMERIC(12,2) DEFAULT 0,
     fuel            NUMERIC(12,2) DEFAULT 0,
+    currency        NUMERIC(12,2) DEFAULT 0,
     diplomatic_status_default VARCHAR(16) DEFAULT 'neutral'
 );
 
@@ -172,7 +181,8 @@ CREATE TABLE resource_log (
     tick_at         TIMESTAMPTZ NOT NULL,
     minerals_delta  NUMERIC(12,2),
     fuel_delta      NUMERIC(12,2),
-    population_delta INTEGER
+    population_delta INTEGER,
+    currency_delta  NUMERIC(12,2)
 );
 ```
 

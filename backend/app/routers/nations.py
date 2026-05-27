@@ -1,9 +1,10 @@
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func as sqlfunc
+from sqlalchemy import case, func as sqlfunc
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.fleet import Fleet
+from ..models.infrastructure import Infrastructure
 from ..models.nation import Nation
 from ..models.territory import Territory
 from ..models.territory_population import TerritoryPopulation
@@ -17,6 +18,29 @@ VACATION_MIN_HOURS = 48
 LOCKOUT_HOURS = 48
 
 router = APIRouter(prefix="/api/nations", tags=["nations"])
+
+_INDUSTRIAL_FACILITIES = {"mine", "refinery", "shipyard"}
+
+
+def _power_metrics(db: Session, nation_id: int) -> tuple[int, int]:
+    military = int(
+        db.query(sqlfunc.coalesce(sqlfunc.sum(Fleet.unit_count), 0))
+        .filter(Fleet.nation_id == nation_id)
+        .scalar()
+    )
+    industrial = int(
+        db.query(sqlfunc.coalesce(sqlfunc.sum(
+            case((Infrastructure.type == "shipyard", 2), else_=1)
+        ), 0))
+        .join(Territory, Infrastructure.territory_id == Territory.id)
+        .filter(
+            Territory.nation_id == nation_id,
+            Infrastructure.type.in_(_INDUSTRIAL_FACILITIES),
+            Infrastructure.status == "active",
+        )
+        .scalar()
+    )
+    return military, industrial
 
 
 @router.get("", response_model=list[NationListItem])
@@ -54,6 +78,7 @@ def create_nation(
         home_territory_id=body.home_territory_id,
         minerals=100,
         fuel=100,
+        currency=2000,
     )
     db.add(nation)
     db.flush()  # get nation.id before updating territory
@@ -66,15 +91,15 @@ def create_nation(
     db.add(TerritoryPopulation(
         territory_id=territory.id,
         current=POPULATION_START,
-        growth_rate=0,
     ))
 
     db.commit()
     db.refresh(nation)
-    return nation
+    return _nation_response(nation, player, db)
 
 
-def _nation_response(nation: Nation, player: Player) -> NationResponse:
+def _nation_response(nation: Nation, player: Player, db: Session) -> NationResponse:
+    military, industrial = _power_metrics(db, nation.id)
     return NationResponse(
         id=nation.id,
         name=nation.name,
@@ -85,6 +110,8 @@ def _nation_response(nation: Nation, player: Player) -> NationResponse:
         fuel=float(nation.fuel),
         currency=float(nation.currency),
         probes_reserve=nation.probes_reserve,
+        military_strength=military,
+        industrial_strength=industrial,
         vacation_mode=player.vacation_mode,
         vacation_since=player.vacation_since.isoformat() if player.vacation_since else None,
         aggression_lockout_until=(
@@ -102,7 +129,7 @@ def get_my_nation(
     nation = db.query(Nation).filter(Nation.player_id == player.id).first()
     if not nation:
         raise HTTPException(status_code=404, detail="No nation found")
-    return _nation_response(nation, player)
+    return _nation_response(nation, player, db)
 
 
 @router.post("/me/vacation/enter", status_code=204)
@@ -180,6 +207,7 @@ def get_nation_public(
         .scalar()
     )
 
+    military, industrial = _power_metrics(db, nation_id)
     owner = db.get(Player, nation.player_id)
 
     return PublicNationResponse(
@@ -189,6 +217,8 @@ def get_nation_public(
         currency_name=nation.currency_name,
         territory_count=territory_count,
         military={"starfighter": int(starfighter_count)},
+        military_strength=military,
+        industrial_strength=industrial,
         vacation_mode=owner.vacation_mode if owner else False,
         vacation_since=owner.vacation_since.isoformat() if owner and owner.vacation_since else None,
     )

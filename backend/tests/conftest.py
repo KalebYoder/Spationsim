@@ -1,17 +1,20 @@
 import os
 
-# Must be set before any app imports so the engine is built against the test DB
+# Must be set before any app imports so the engine is built against the test DB.
+# When running inside Docker (docker compose run/exec): DB_PASSWORD comes from env_file,
+# and the host is 'db' (the compose service name). TEST_DATABASE_URL overrides everything.
+_db_pw = os.getenv("DB_PASSWORD", "SpationDev2026")
 os.environ["DATABASE_URL"] = os.getenv(
     "TEST_DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/spationsim_test",
+    f"postgresql://spationsim:{_db_pw}@db/spationsim_test",
 )
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("REDIS_URL", "redis://redis:6379/0")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
 from app.main import app
 from app.db.database import Base, get_db
@@ -20,25 +23,33 @@ from app.models.nation import Nation
 from app.core.security import create_access_token, hash_password
 
 _engine = create_engine(os.environ["DATABASE_URL"])
+TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_database():
-    Base.metadata.drop_all(bind=_engine)
+    # DROP SCHEMA handles the circular FK between nations ↔ territories cleanly
+    with _engine.begin() as conn:
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
     Base.metadata.create_all(bind=_engine)
     yield
-    Base.metadata.drop_all(bind=_engine)
+
+
+@pytest.fixture(autouse=True)
+def clean_tables(setup_database):
+    # Truncate all tables before each test; CASCADE handles FK ordering
+    table_names = ", ".join(f'"{name}"' for name in Base.metadata.tables.keys())
+    with _engine.begin() as conn:
+        conn.execute(text(f"TRUNCATE {table_names} RESTART IDENTITY CASCADE"))
+    yield
 
 
 @pytest.fixture()
-def db(setup_database):
-    conn = _engine.connect()
-    trans = conn.begin()
-    session = Session(bind=conn, join_transaction_mode="create_savepoint")
+def db(clean_tables):
+    session = TestingSession()
     yield session
     session.close()
-    trans.rollback()
-    conn.close()
 
 
 def _override_factory(session):

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNation } from '../hooks/useNation'
+import { useDiplomacy } from '../hooks/useDiplomacy'
 import { PageHeader, Card, Btn } from '../components/ui'
 
 const HEX_SIZE = 9
@@ -31,8 +32,10 @@ function hexDistance(keyA, keyB) {
 
 export default function MapView() {
   const { nation } = useNation()
+  const { colorOf } = useDiplomacy()
   const [territories, setTerritories] = useState([])
   const [fleets, setFleets] = useState([])
+  const [wars, setWars] = useState([])
   const [loading, setLoading] = useState(true)
   const [hovered, setHovered] = useState(null)
 
@@ -44,17 +47,25 @@ export default function MapView() {
   const [sendError, setSendError] = useState('')
   const [sendSuccess, setSendSuccess] = useState('')
 
+  // Nation info panel (enemy territory click)
+  const [nationPanel, setNationPanel] = useState(null)  // { nationId, nationName, territory }
+  const [declaringWar, setDeclaringWar] = useState(false)
+  const [warError, setWarError] = useState('')
+
   const load = useCallback(async () => {
-    const [tRes, fRes] = await Promise.all([
+    const [tRes, fRes, wRes] = await Promise.all([
       fetch('/api/territories', { credentials: 'include' }),
       fetch('/api/military/fleets', { credentials: 'include' }),
+      fetch('/api/diplomacy/wars', { credentials: 'include' }),
     ])
-    const [t, f] = await Promise.all([
+    const [t, f, w] = await Promise.all([
       tRes.ok ? tRes.json() : [],
       fRes.ok ? fRes.json() : [],
+      wRes.ok ? wRes.json() : [],
     ])
     setTerritories(t)
     setFleets(f)
+    setWars(w)
     setLoading(false)
   }, [])
 
@@ -77,10 +88,48 @@ export default function MapView() {
     ? Math.ceil(hexDistance(source.node_key, dest.node_key) / 2)
     : null
 
+  const handleDeclareWar = async () => {
+    if (!nationPanel) return
+    setDeclaringWar(true)
+    setWarError('')
+    try {
+      const r = await fetch('/api/diplomacy/war', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_nation_id: nationPanel.nationId }),
+      })
+      const data = await r.json()
+      if (!r.ok) { setWarError(data.detail || 'Failed'); return }
+      load()
+    } catch {
+      setWarError('Network error')
+    } finally {
+      setDeclaringWar(false)
+    }
+  }
+
   const handleTerritoryClick = (t) => {
     if (t.territory_type === 'void') return
     setSendError('')
     setSendSuccess('')
+
+    // Clicking an enemy territory — show nation info panel (or set as fleet dest if deploying)
+    if (t.nation_id && t.nation_id !== nation?.id) {
+      if (source) {
+        // In fleet-send mode: set as destination
+        setDest(t)
+        setSendQty(Math.min(sendQty, maxQty))
+        setNationPanel(null)
+      } else {
+        // Show nation panel
+        setNationPanel({ nationId: t.nation_id, nationName: t.nation_name, territory: t })
+        setWarError('')
+      }
+      return
+    }
+
+    setNationPanel(null)
 
     // If no source yet and this is our territory with stationed fighters — select as source
     if (!source) {
@@ -216,7 +265,7 @@ export default function MapView() {
             <strong style={{ color: 'var(--text-primary)' }}>{tooltip.node_key}</strong>
             {' — '}
             {tooltip.nation_name
-              ? <span style={{ color: 'var(--purple)' }}>{tooltip.nation_name}</span>
+              ? <span style={{ color: tooltip.nation_id === nation?.id ? 'var(--teal)' : colorOf(tooltip.nation_id) }}>{tooltip.nation_name}</span>
               : <span style={{ color: 'var(--text-muted)' }}>Unclaimed</span>
             }
             {' · '}Distance {tooltip.distance_from_center}
@@ -287,10 +336,53 @@ export default function MapView() {
         </Card>
       )}
 
+      {/* Nation info panel — shown when clicking an enemy territory */}
+      {nationPanel && !source && (
+        <Card style={{ marginTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: colorOf(nationPanel.nationId), marginBottom: 4 }}>
+                {nationPanel.nationName}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                Territory: {nationPanel.territory.name || nationPanel.territory.node_key}
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              {wars.some(w => w.nation_id === nationPanel.nationId) ? (
+                <span style={{
+                  fontSize: 12, fontWeight: 600, color: 'var(--danger)',
+                  border: '1px solid var(--danger)', borderRadius: 4, padding: '3px 10px',
+                }}>
+                  AT WAR
+                </span>
+              ) : (
+                <Btn
+                  variant="danger"
+                  disabled={declaringWar}
+                  onClick={handleDeclareWar}
+                  style={{ fontSize: 12, padding: '4px 12px' }}
+                >
+                  {declaringWar ? 'Declaring…' : 'Declare War'}
+                </Btn>
+              )}
+              <Btn variant="ghost" onClick={() => { setNationPanel(null); setWarError('') }}
+                style={{ fontSize: 12, padding: '4px 10px' }}>
+                ✕
+              </Btn>
+            </div>
+          </div>
+          {warError && (
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--danger)' }}>{warError}</div>
+          )}
+        </Card>
+      )}
+
       {/* Instruction hint */}
-      {!source && !sendSuccess && (
+      {!source && !sendSuccess && !nationPanel && (
         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10 }}>
-          Click one of your territories (amber dot = fighters stationed) to begin a fleet deployment.
+          Click one of your territories (amber dot = fighters stationed) to deploy a fleet.
+          Click an enemy territory to view their nation.
         </p>
       )}
     </div>
