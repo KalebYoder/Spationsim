@@ -7,7 +7,8 @@
 
 - **Node** / **Territory** — interchangeable terms for a single point on the map. "Node" is preferred in technical/code contexts; "territory" is preferred in player-facing UI and game design writing.
 - **Planet** — any node with non-zero resource richness (mineral_richness > 0 or fuel_richness > 0). Planets can be colonized and developed.
-- **Void** — any node with zero resource richness (both mineral_richness = 0 and fuel_richness = 0). Void nodes cannot be colonized or developed, but can be claimed (ownership established without population). Claimed void nodes are primarily relevant for trade route control and wartime blockades.
+- **Void** — any node where both mineral_richness = 0 and fuel_richness = 0. Void nodes cannot be colonized or developed, but can be claimed (ownership established without population). Claimed void nodes are primarily relevant for trade route control and wartime blockades.
+- **Anomaly** — a void-zone node with richness 5–10 in one resource and 0 in the other. Rare (1/1000 void hexes). Can be colonized.
 
 ---
 
@@ -18,7 +19,8 @@ A space-based browser nation simulator in the vein of CyberNations and Politics 
 - Player-driven exploration and colonization mechanics
 - An information economy around probe/scout data
 - Timer mechanics designed to not punish players for having a life
-Possible name "Interstellar States"?
+
+Possible name: "Interstellar States"
 
 Players control space-based nations. Territory exists on a shared map. Conflict arises naturally from resource scarcity and territorial ambition rather than being purely consensual.
 
@@ -27,7 +29,7 @@ Players control space-based nations. Territory exists on a shared map. Conflict 
 ## Core Design Principles
 
 **Inaction should never produce maximum harm.**
-All timer-based events should default to the safe outcome if the player is not present. Players can set contingency orders (e.g. "recall fleet if I don't confirm within X hours").
+All timer-based events default to the safe outcome if the player is not present. Players can set contingency orders (e.g. "recall fleet if I don't confirm within X hours").
 
 **The rim is a viable permanent playstyle, not a waiting room.**
 Rim territory has lower resource density but lower conflict and lower maintenance costs. New players are not permanently disadvantaged by late entry.
@@ -63,74 +65,6 @@ Maintain a public roadmap. Be responsive to the player community. This is a diff
 - Procedural expansion triggered by player count or in-game events (TBD)
 - Explored-but-undeveloped territory reverts to neutral after X days without maintenance to prevent squatting
 - Territory holding costs scale to prevent monopolization by wealthy alliances
-
----
-
-## Core Systems
-
-### Resource System
-- 2–3 resource types for beta (expand later)
-- Resources generated on a tick system (frequency TBD, likely every 2 hours)
-- Resource density tied to territory location (center vs rim)
-- Players collect resources automatically — no manual collection required
-
-### Exploration & Probes
-- Players send probes to scout unclaimed territory
-- Probe range limited by distance from nearest owned colony
-- Probes can be detected and destroyed when passing through hostile territory
-  - Detection gives the territory owner an early warning, not just a block
-- Probe data (coordinates + resource/terrain info) is private to the discovering player
-- Data can be sold or traded to other players
-- Colonized territory is immediately visible to all players on the map (stale data problem self-solves)
-- Scouting costs resources; colonization costs significantly more
-
-### Colonization
-- Two-step process: claim first, then populate
-- **Claiming unclaimed territory**: a stationed fleet (starfighters) on an unclaimed normal territory can claim it immediately via a player action. The territory becomes owned but starts with zero population — no resource extraction or facility construction is possible until population is transferred.
-- **Populating claimed territory**: colony ships transport population from an existing territory to a newly claimed one. A colony ship holds up to 100 population, travels at 1 node/tick, and can load/unload at any colonized normal territory owned by the player. Colony ships are built at shipyards (500 minerals, 1000 fuel each).
-- Probes cannot claim territory.
-- Colony ships cannot leapfrog — must travel through owned or at least reachable space (distance-based, no path-tracing in beta).
-- Flanking via slow leapfrog colonization is intentional and acceptable; it costs resources and is visible.
-
-### Information Economy
-- Probe data is a tradeable commodity
-- Timestamps on data so buyers know how old it is
-- Espionage mechanic to steal probe data (post-beta)
-- Explorer archetype: specialize in scouting and selling information rather than military expansion
-
-### Tick System
-- Heartbeat of the game
-- Handles: resource generation, construction completion, probe movement, combat resolution
-- Implemented via Celery + Redis
-- All timed events default to safe outcome on expiration if player has not confirmed
-
-### Construction & Infrastructure
-- Players build improvements on colonized territory
-- **Facility types (beta):** Mine (minerals), Refinery (fuel), Shipyard (starfighters + colony ships), Probe Factory (probes)
-- Shipyard replaces the earlier "fighter factory" concept — it builds both combat units and colony ships from a single facility
-- Production formula: `round(2 × territory_richness)` per facility per tick
-- Each facility type has a population assignment cost (Mine: 10, Refinery: 10, Probe Factory: 20, Shipyard: 40)
-- **Facility construction costs include a currency component** alongside minerals and fuel. Currency is not the dominant cost at low tiers — new players should be able to build their first facilities quickly on 500 currency/tick income — but scales up for advanced facilities. Rationale: without a currency spending sink, players accumulate currency indefinitely and the probe data marketplace (Phase 5) loses its price anchor because buyers have unlimited supply.
-- Infrastructure has maintenance costs (post-beta: costs scale over time to cap maximum nation size)
-- Military units require infrastructure support on player territory (supply chain — post-beta)
-
-### Combat (Beta: Rudimentary)
-- Single unit type for initial beta
-- Basic attack/defend resolution
-- War declaration required before combat (no surprise attacks)
-- Confirmation window on fleet arrival — combat does not trigger immediately; fleet enters `pending_confirmation` for 2 ticks (4 hours); both sides see it
-- Players can set standing orders for fleet behavior when offline
-- Soft damage model: undefended resources drain gradually rather than all-or-nothing on single strike
-
-#### Pre-Engagement Skirmishing (Planned)
-During the confirmation window, small attrition losses occur on both sides to represent long-range hail-mary shots and perimeter skirmishes before the main engagement. These losses are minor (exact formula TBD) and happen each tick while the fleet is `pending_confirmation` or `holding`. This rewards defenders who can muster a response during the window, creates a cost for leaving a fleet parked indefinitely, and makes the confirmation window feel alive rather than a clean pause. Implementation deferred until basic combat resolution is in place.
-
-### Player Interaction
-- Direct resource trade between players
-- Probe data buying/selling
-- War declaration
-- Basic diplomatic status: allied / neutral / hostile
-- Alliance mechanics deferred to post-beta; players use Discord to organize during alpha
 
 ---
 
@@ -170,118 +104,97 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 - Nginx/frontend: minimal
 - Remaining: media server + OS overhead
 
-### Future Hosting Path
-1. Home server (beta)
-2. Hetzner dedicated server (~€40–60/month) if traction develops
-3. Revisit AWS/Azure only if scaling exceeds what Hetzner can handle (unlikely for this game type)
+---
+
+## What's Done
+
+### Foundation
+- Auth system: registration, login, sessions, password hashing, protected routes
+- Nation creation flow
+- UI skeleton with sidebar navigation
+- Hex grid MapView with territory ownership display and fleet deployment workflow
+
+### Economy
+- Three resource types: minerals, fuel, population
+- Tick system: Celery + Redis, 2-hour interval
+- Resource generation per facility per tick:
+  - Normal territory (richness 1–5): `max(5, round(richness × 2))` → 5–10/tick
+  - Anomaly territory (richness 5–10): `round(richness × 2 + 10)` → 20–30/tick
+- Construction system: mine, refinery, shipyard, probe factory
+- Facility costs include currency (mine/refinery 500¤, shipyard 2000¤) to create a spending sink
+- Population growth: 1%/tick, capped at `50 × (mineral_richness + fuel_richness)` per territory
+- Currency income: 500¤/tick per colonized territory with at least one active mine or refinery
+- Fleet currency upkeep: 2¤/tick per fighter regardless of status
+- Fleet fuel upkeep: 1 fuel/tick per fighter not docked on an owned territory (in-transit, holding, pending, or stationed on foreign/unclaimed territory)
+- Event log page at `/log`: resource deltas, population changes, fleet events, combat, construction
+
+### Exploration
+- Probes: manufactured at probe factory (1000 min + 500 fuel + 10000¤ each), held in reserve, dispatched to destinations
+- Probe range limited by distance from nearest owned colony
+- Probe detection: territory owner notified on transit; probe destroyed if nations are at war
+- Probe data: stored privately per nation, displayed in "Your Intelligence" table (coordinates, richness, time since discovery)
+- Colony ships: built at shipyard (500 min + 1000 fuel each), hold up to 100 population, travel at 1 node/tick
+- Colony ship load/unload at any owned colonized normal territory
+- Territory claiming: a stationed fleet on an unclaimed normal territory claims it instantly; starts with zero population until a colony ship unloads
+- Dynamic map generation: probes generate territory rows for uncharted hexes they scan; integer richness 1–5 weighted by distance from cluster center; void-zone anomalies at 1/1000 rate
+
+### Combat & Military
+- Single unit type: starfighter (ATK 2, DEF 1, HP 5, 2 nodes/tick; costs 15 min + 30 fuel + 1000¤ each)
+- Fleet movement: dispatch, in-transit travel, arrival landing with merge into stationed fleet
+- Vacation mode: instant entry, 48h minimum stay, 48h aggression lockout on exit, untargetable while active
+- War declaration: 2-tick (4h) grace period before hostilities; blocked against vacation-mode targets; 24h minimum war duration
+- Confirmation window: fleet entering enemy territory enters `pending_confirmation` for 2 ticks (4h); visible to both sides; attacker can confirm or recall; expiry executes standing order
+- Standing orders: hold (default) or recall — applied on confirmation window expiry
+- Basic combat resolution: engaged fleets fight stationed defenders each tick (`max(1, round(count × attack/hp))` losses each side); resource drain 5%/tick minerals + fuel when territory is undefended
+- Holding fleet attrition: `max(1, round(unit_count × 0.01))` losses per tick; fleet deleted at zero with event logged
+
+### Player Interaction
+- Chat: public channels and direct messages with auto-tab on incoming DM
+- Mail: inbox, outbox, delete
+- Friends system: send/accept/refuse/cancel/remove requests; sidebar badge for incoming requests; friend_pending blocks fleet dispatch to that nation's planets
+- Diplomacy statuses: neutral, war, war_pending, friendly, friend_pending
+- Diplomatic name coloring: green (friendly/friend_pending), beige (neutral), red (war/war_pending) across map, probes, diplomacy, and friends pages
+- Power metrics: military strength (1 per fighter, all statuses) and industrial strength (mine=1, refinery=1, shipyard=2, active only) — visible to all on nation profiles; visible to self on home page
+- Territory rename cooldown: 24h (12 ticks); returns exact time remaining on 409
+
+### Notifications & Events
+- `territory_claimed` event includes `former_nation_id` in payload
+- `territory_lost` event fires for the former owner when a territory changes hands
 
 ---
 
-## Known Issues / To-Fix List
+## What's Still To Do
 
-*Identified by game design review against genre best practices. Ordered by priority.*
+### Remaining Feature Work
 
-### Best Practice Violations
+**Exploration (Phase 3)**
+- [ ] Information selling — probe data marketplace; players list and purchase others' probe data; seller retains data; UI shows data age and whether the target is already colonized at time of purchase
 
-1. **Resource richness ignored in production** — *(Fixed)* Production is now `round(2 × richness)` per facility per tick.
+**Combat (Phase 4)**
+- [ ] Territory conquest — territory actually changing hands when an attacker wins; currently only resource drain occurs on undefended territory
+- [ ] Pre-engagement skirmishing during `pending_confirmation` — small attrition losses each tick while fleet waits in the confirmation window (separate from holding fleet attrition, which is already implemented)
 
-2. **Starfighters stored as a nation-level count, not positioned fleets** — *(Fixed)* Fleets are rows in the `fleets` table with `origin_territory` tracking location; in-transit fleets have `destination_territory` and `arrives_at`; the tick lands them each cycle.
+**Player Interaction (Phase 5)**
+- [ ] Direct resource trading between players
+- [ ] Probe data marketplace (frontend + transaction endpoints)
 
-3. **Population growth uncapped and independent of player action** — *(Fixed)* Growth is 5% per tick, capped at `50 × (mineral_richness + fuel_richness)` per territory.
+**Alpha Test (Phase 6)**
+- [ ] Invite veteran player testers (closed beta)
+- [ ] Publish public roadmap
+- [ ] Establish feedback collection process
 
-4. **No persistent map page** — *(Fixed)* MapView page exists with hex grid, fleet deployment workflow, and territory ownership display.
+### Known Open Issues
 
-5. **No colonization mechanic with no territory limit** — *(Fixed)* Two-step colonization: fleets claim unclaimed territory, colony ships transport population. Newly claimed territory has zero population until a colony ship unloads there.
+**Balance**
+- **Population growth rate** — currently 1%/tick. Territories fill to their richness-based cap quickly at low populations. Monitor during beta; may need to reduce to 0.1–0.5% if population becomes a non-constraint too quickly.
+- **Holding fleet attrition rate** — currently `max(1, round(unit_count × 0.01))` (1%/tick, min 1). A 100-unit fleet lasts ~100 ticks (~200 hours). Monitor during beta; reduce to 0.5% if fleets disappear before players can act, increase to 2% if lurking remains a problem.
 
-6. **Vacation mode has no exit cooldown** — *(Fixed)* 48-hour minimum stay enforced on entry; 48-hour aggression lockout applied on exit (blocks fleet dispatch and vacation re-entry). See Decisions Log.
+**Missing Standard Features**
+- **No facility limits per territory** — players can stack unlimited facilities on a single tile. A population-capped center territory could staff 50 mines and generate 500 minerals/tick from one node, far exceeding any design intent. Needs a per-territory slot cap.
 
-### Balance Problems
-
-1. **Population growth rate is too fast** — At 5%/tick (every 2 hours), territories reach their richness-based population cap in roughly 3 days. Population becomes a non-constraint almost immediately, removing the primary strategic gate on facility construction and military buildup. Recommend 0.5–1%/tick maximum. Requires tuning against beta feedback before adjustment.
-
-2. **24:1 production gap between center and rim at game start** — A center territory (richness 5) with one mine/refinery produces `round(2×5) = 10` resources/tick. A rim territory (richness 1) produces 2. This creates a 5× per-facility gap before accounting for population. Early-game players starting rim are locked out of military participation for days while center players can build combat fleets within hours. Violates "rim is a viable permanent playstyle." Needs either a minimum richness floor, a rim production bonus, or production formula tuning.
-
-3. **Probe cost is negligible — information economy collapses in week one** — Probes cost 2 minerals + 1 fuel each. A single mine at richness 2 generates 4 minerals/tick, enough for 2 probes/tick indefinitely with no fleet upkeep. The entire map can be blanketed within the first week, eliminating the strategic value of probe data as a scarce commodity. Fix requires either a significant cost increase (10× or more) or a stationed-probe upkeep drain.
-
-4. **`holding` fleets have zero cost** — A fleet parked in `holding` status at an enemy territory burns no fuel, incurs no upkeep, and drains no defender resources. Players can park intimidation fleets in enemy space indefinitely at zero cost. This makes the confirmation window mechanic weightless — there is no pressure to act. Planned skirmish attrition (see Pre-Engagement Skirmishing section) will address this, but it is unimplemented.
-
-### Missing Standard Features
-
-1. **No player-to-player interaction** — *(Partially fixed)* Chat (public channels + DMs) and mail system implemented. Trade and war declaration still pending.
-
-2. ~~**No tick event log**~~ — *(Implemented)* Event log page at `/log` shows per-tick resource deltas, population changes, probe arrivals, combat events, and construction completions.
-
-3. **No facility limits per territory** — No reason to hold more than one territory if facilities can stack infinitely at home. A population-capped center territory can staff 50 mines and generate 500 minerals/tick from a single tile, outpacing any design intent. Needs a per-territory slot cap.
-
-4. **No military upkeep** — Units cost population to build but have zero ongoing cost. Players stockpile indefinitely with no decay loop. Fuel upkeep is the standard mechanism.
-
-5. **No score or power metric** — No competitive reference frame for beta players; no matchmaking signal for combat. Even a simple composite stat on a leaderboard suffices.
-
-6. **Probe reward loop closed** — *(Fixed)* Probes page now shows a "Your Intelligence" table: coordinates, planet name (if named), mineral/fuel richness, and time since discovery. ProbeData stored per nation; `GET /api/probes/data` endpoint returns newest-first.
-
-7. **No per-territory base income** — *(Fixed)* Colonized territories with at least one mine or refinery generate 500 currency/tick (in addition to mineral/fuel output). Bare territories with no extraction facilities generate no currency income, keeping the strategic incentive to develop.
-
-8. **Territory renaming has no cooldown** — *(Fixed)* 24-hour (12-tick) cooldown enforced on rename. Attempting to rename again within the window returns a 409 with the exact remaining time.
-
-### Implementation Gaps (Technical)
-
-1. **`TerritoryPopulation.growth_rate` column is vestigial** — The column exists in the schema and is always written as `0`, but `run_tick` uses the global `POPULATION_GROWTH_RATE` constant, never reading the per-row value. The column implies per-territory configurability that does not exist. Will mislead any future code that reads it.
-
-2. **Probes can be silently stranded mid-transit** — If `_next_step()` resolves to a hex key not yet in the territories table, the probe stops moving silently: no event, no notification to the owner, no recovery mechanism. The tick simply skips it on every subsequent run. Affects probe paths through ungenerated space.
-
-3. **Colony ship reachability constraint not enforced** — The spec states colony ships must travel through owned or reachable space. The `send_colony_ship` endpoint calculates travel time based on distance but performs no adjacency or path check. A ship can be dispatched across the entire map to an isolated owned territory with no colonized space in between, bypassing the flanking/leapfrog constraint entirely.
-
-4. **Territory capture will produce no notification for the former owner** — The `territory_claimed` event payload only carries the claimant's `nation_id`. When conquest is implemented and an attacker takes an enemy territory, the previous owner will receive no event notification. Flag this when implementing conquest.
-
----
-
-## Development Order
-
-### Phase 1 — Foundation
-- [x] Auth system (registration, login, sessions, security)
-- [x] Nation creation flow
-- [x] Rough draft UI skeleton
-- [x] Basic map representation (hex grid MapView with fleet deployment)
-
-### Phase 2 — Economy
-- [x] Resource types defined (minerals, fuel, population)
-- [x] Territory resource values assigned (richness on map generation)
-- [x] Tick system (Celery + Redis, 2-hour interval)
-- [x] Resource generation per territory per tick (`round(2 × richness)` per facility)
-- [x] Construction system (mine, refinery, shipyard, probe factory)
-- [x] Population system (5% growth per tick, richness-based cap, assignment to facilities)
-- [x] Fleet arrival processing in tick
-
-### Phase 3 — Exploration
-- [x] Probe mechanic (manufacture at probe factory, reserve system)
-- [x] Colony ship mechanic (build at shipyard, population transport, load/unload)
-- [x] Territory claiming (stationed fleet claims unclaimed territory; no population until colony ship unloads)
-- [x] Probe dispatch and travel
-- [x] Probe range limits (distance from nearest colony)
-- [x] Probe detection by territory owners (vision scanning — owner notified on transit)
-- [x] Probe data storage (private to player) — stored in `probe_data` table; per-nation isolation; `GET /api/probes/data` returns all discoveries newest-first
-- [x] Probe data UI report view — "Your Intelligence" table on Probes page: coordinates, planet name, richness values, time since discovery
-- [ ] Information selling between players
-
-### Phase 4 — Combat
-- [x] Single unit type (starfighter: ATK 2, DEF 1, HP 5, 2 nodes/tick)
-- [x] Fleet movement (send, in-transit, arrival processing)
-- [x] Vacation mode (48h min stay, 48h aggression lockout on exit)
-- [x] War declaration system — `POST /api/diplomacy/war`; blocked against vacation-mode targets; 24-hour minimum war duration enforced on `DELETE /api/diplomacy/war/{id}`
-- [x] Confirmation window on fleet arrival — fleet enters `pending_confirmation` on arrival at enemy territory; 2-tick (4h) window; attacker can confirm or recall; expiry executes standing order (hold → `holding`, recall → auto-returns in transit); both events logged for each side
-- [x] Basic combat resolution — `engaged` fleets process each tick: combat rounds against stationed defender fleets (both sides take casualties via `max(1, round(count × attack/hp))`); resource drain (5%/tick minerals + fuel) when territory is undefended; `combat_round`, `fleet_destroyed_in_combat`, and `resources_drained_by_occupation` events logged
-- [x] Standing orders (hold/recall defaults — applied on confirmation window expiry)
-
-### Phase 5 — Player Interaction
-- [ ] Direct resource trading
-- [ ] Probe data marketplace
-- [ ] Diplomatic status flags
-- [x] Basic player messaging (chat: public channels + DMs with auto-tab on incoming message; mail: inbox/outbox/delete)
-
-### Phase 6 — Alpha Test
-- [ ] Invite veteran player testers (closed)
-- [ ] Public roadmap published
-- [ ] Feedback collection process established
+**Implementation Gaps**
+- **Probes can silently strand mid-transit** — if `_next_step()` resolves to a hex not yet generated, the probe stops moving with no event, no notification, and no recovery. Affects probe paths through ungenerated space.
+- **Colony ship reachability not enforced** — ships can be dispatched across the entire map with no adjacency or path check, bypassing the flanking/leapfrog design intent. The spec requires ships to travel through owned or reachable space; the endpoint does not verify this.
 
 ---
 
@@ -298,29 +211,6 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ---
 
-## Decisions Log
-
-| Question | Decision | Notes |
-|---|---|---|
-| Tick frequency | 2 hours | Standard for genre; revisit after beta feedback |
-| Resources for beta | Minerals, Fuel, Population | Population staffs mines/refineries and is required for colony ships and combat units; grows organically over time, affected by infrastructure |
-| Map size | 500–800 territory nodes | Supports 20–50 testers with room to expand before natural collision; revisit based on observed expansion rates |
-| Probe data transfer | Non-exclusive | Seller retains data; UI shows data age and colonization status at time of purchase to mitigate scam potential |
-| Confirmation window | 2 ticks (4 hours) | Consistent with game's internal logic; fleet holds visibly during window so defender can see it, call for help, and diplomacy can occur |
-| Vacation mode mechanics | Option 3: aggression lockout on exit | 48-hour minimum stay enforced; 48-hour post-exit lockout blocks fleet dispatch, colony ship dispatch, and vacation re-entry. Surveyed CyberNations, P&W, OGame, Ikariam — chosen approach maps cleanly onto single-unit-type beta. Vacation entry history is also public on player profile (transparency without additional restriction). |
-| Colonization method | Two-step: fleet claims, colony ship populates | Fleets (starfighters) claim unclaimed territory on arrival; territory starts with zero population. Colony ships (500 minerals, 1000 fuel, 1 node/tick, 100 pop capacity) transfer population to enable facility construction and resource extraction. Probes cannot claim. |
-| Shipyard replaces fighter factory | Yes | Single facility builds both starfighters and colony ships. Costs 50 minerals, 20 fuel to build; requires 40 assigned population to operate. |
-| Colony ship build cost | 500 minerals, 1000 fuel | No population cost at build time — colony ships are vessels, not population units. Population consumed only via the load action. |
-| Territory income | 500 currency/tick per colonized territory with ≥1 mine or refinery | Bare claimed territory generates zero currency. Keeps development meaningful — holding land without building yields nothing. |
-| Territory rename cooldown | 24 hours (12 ticks) | Prevents mid-war map confusion via rapid renames. Error response includes exact time remaining. |
-| Map generation | Dynamic, probe-driven; integer richness 1–5 | Seeder creates full cluster + 6-hex void ring per cluster. Probes dynamically generate territory rows for uncharted hexes they scan. Richness weighted: 75% chance of 5 at cluster center, 75% chance of 1 at rim, linear slide. Void-zone hexes have 1/1000 chance of becoming an anomaly node (5–10 richness in one resource, 0 in the other). |
-
-## Future Concerns
-
-- **Holding fleet attrition rate**: Currently set to `max(1, round(unit_count × 0.01))` — 1% per tick with a minimum of 1 unit. This means a 1-unit fleet lasts exactly 1 tick; a 100-unit fleet lasts ~100 ticks (~200 hours). Monitor during beta to determine whether this rate discourages aggressive play too strongly or allows fleets to lurk too long. If fleets are disappearing before players can act, reduce to 0.5% or increase the minimum loss threshold. If lurking remains a problem, increase to 2%.
-
----
-
 ## Open Questions
 
 - Does population die permanently in combat, or does it reduce and recover? (Significant design weight — bring to veteran players)
@@ -330,6 +220,29 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 - **Defender repositioning during war declaration window**: when war is declared, both nations enter a 2-tick (4-hour) grace period before hostilities begin. During this window a defender who sees the `war_declared` notification can freely withdraw fleets, consolidate defenses, and reposition units — potentially negating any element of surprise and making offensive declarations weaker than intended. Possible mitigations: freeze fleet movement for both parties during the window; only restrict the attacker's fleet movement; apply a "mobilization" phase where both sides can reinforce but not reposition out of their own territory; limit the window to first-ever war declarations. No decision made — bring to veteran players during closed beta.
 
 ---
+
+## Decisions Log
+
+| Question | Decision | Notes |
+|---|---|---|
+| Tick frequency | 2 hours | Standard for genre; revisit after beta feedback |
+| Resources for beta | Minerals, Fuel, Population | Population staffs mines/refineries and is required for colony ships and combat units; grows organically over time, affected by infrastructure |
+| Map size | 500–800 territory nodes | Supports 20–50 testers with room to expand before natural collision; revisit based on observed expansion rates |
+| Probe data transfer | Non-exclusive | Seller retains data; UI shows data age and colonization status at time of purchase to mitigate scam potential |
+| Confirmation window | 2 ticks (4 hours) | Consistent with game's internal logic; fleet holds visibly during window so defender can see it, call for help, and diplomacy can occur |
+| Vacation mode mechanics | 48h minimum stay + aggression lockout on exit | 48-hour post-exit lockout blocks fleet dispatch, colony ship dispatch, and vacation re-entry. Surveyed CyberNations, P&W, OGame, Ikariam. Vacation entry history is public on player profile. |
+| Colonization method | Two-step: fleet claims, colony ship populates | Fleets (starfighters) claim unclaimed territory on arrival; territory starts with zero population. Colony ships (500 minerals, 1000 fuel, 1 node/tick, 100 pop capacity) transfer population to enable facility construction and resource extraction. Probes cannot claim. |
+| Shipyard design | Single facility builds both starfighters and colony ships | Costs 150 minerals + 60 fuel + 2000¤; requires 40 assigned population to operate. |
+| Colony ship build cost | 500 minerals, 1000 fuel | No population cost at build time — colony ships are vessels, not population units. Population consumed only via the load action. Not subject to the general cost rebalance, to avoid blocking early colonization. |
+| Territory income | 500 currency/tick per colonized territory with ≥1 active mine or refinery | Bare claimed territory generates zero currency. Keeps development meaningful. |
+| Territory rename cooldown | 24 hours (12 ticks) | Prevents mid-war map confusion via rapid renames. Error response includes exact time remaining. |
+| Map generation | Dynamic, probe-driven; integer richness 1–5 | Seeder creates full cluster + 6-hex void ring per cluster. Probes dynamically generate territory rows for uncharted hexes they scan. Richness weighted: 75% chance of 5 at cluster center, 75% chance of 1 at rim, linear slide. Void-zone hexes have 1/1000 chance of becoming an anomaly node (5–10 richness in one resource, 0 in the other). |
+| Resource production scale | Normal 5–10/tick, anomaly 20–30/tick | Formula is territory-type-aware: normal `max(5, round(richness × 2))`; anomaly `round(richness × 2 + 10)`. Replaces flat `round(2 × richness)`. Closes the 5× rim/center gap and makes anomalies meaningfully more productive. |
+| Resource cost rebalance | Tripled facility and fighter mineral/fuel costs; large currency costs added | Mine: 60 min + 30 fuel + 500¤. Refinery: 30 min + 60 fuel + 500¤. Shipyard: 150 min + 60 fuel + 2000¤. Probe factory: 30 min + 15 fuel. Fighter: 15 min + 30 fuel + 1000¤. Probe: 1000 min + 500 fuel + 10000¤. Colony ships unchanged. Rationale: slow expansion once the initial map is settled; currency costs create a meaningful spending sink that anchors the probe data marketplace. |
+| Holding fleet attrition | `max(1, round(unit_count × 0.01))` losses per tick | 1% attrition with minimum 1 unit/tick. Replaces the zero-cost lurking mechanic. Fleet deleted at 0 with events logged. Monitor rate during beta. |
+| Fleet fuel upkeep | 1 fuel/tick per fighter not docked on own territory | "Docked" = stationed on a territory owned by that nation. All other fleet statuses and stationed fleets on foreign/unclaimed territory pay upkeep. Creates ongoing fuel drain for sustained military projection. |
+| Power metrics | Military strength (1 per fighter) + industrial strength (mine=1, refinery=1, shipyard=2) | Computed at query time, not stored. Visible to all on nation profiles; visible to self on home page. Provides a competitive reference frame and a rough matchmaking signal. |
+| Friends system | Separate from diplomacy; friend_pending blocks planet dispatch | Friend requests use the diplomacy table (status: friend_pending/friendly). A nation in friend_pending or friendly status cannot have fleets dispatched to their planets, treating them like neutral for combat purposes. |
 
 ---
 
@@ -344,7 +257,3 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 | `SECRET_KEY` | `CaoTU4MqP5BVyuXc6ktbjEL7dG1pZ9RDAgWfKIHln3mYsxeO` |
 
 These are written to `.env` (git-ignored). To rotate: update `.env` and restart the stack. Rotating `SECRET_KEY` invalidates all existing sessions.
-
----
-
-*Last updated: Phases 1–2 complete, Phase 3 partial (probe dispatch/travel/range/detection/data storage/UI done; info selling pending), Phase 4 substantially complete (fleet movement + vacation mode + confirmation window + standing orders + war declaration + basic combat resolution done; pre-engagement skirmishing for `holding` fleets pending), Phase 5 partial (chat + mail done; trading + marketplace + diplomacy flags pending). Dynamic probe-driven map generation implemented (integer richness 1–5, void rings, anomaly nodes). Balance problems and implementation gaps documented in Known Issues.*

@@ -79,7 +79,7 @@ def _make_territory(db: Session, node_key: str, nation_id: int, is_colonized=Tru
     )
     db.add(t)
     db.flush()
-    db.add(TerritoryPopulation(territory_id=t.id, current=POPULATION_START * 10, growth_rate=0.01))
+    db.add(TerritoryPopulation(territory_id=t.id, current=POPULATION_START * 10))
     db.flush()
     return t
 

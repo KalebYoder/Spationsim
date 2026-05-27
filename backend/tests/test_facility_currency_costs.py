@@ -38,7 +38,7 @@ from app.constants import FACILITY_COSTS, POPULATION_START
 
 MINE_CURRENCY_COST = 500
 REFINERY_CURRENCY_COST = 500
-SHIPYARD_CURRENCY_COST = 1000
+SHIPYARD_CURRENCY_COST = 2000
 NATION_STARTING_CURRENCY = 2000
 
 
@@ -102,7 +102,6 @@ def _colonize(db: Session, nation: Nation, territory: Territory) -> None:
     db.add(TerritoryPopulation(
         territory_id=territory.id,
         current=POPULATION_START * 10,  # plenty of population to staff
-        growth_rate=0.01,
     ))
     db.flush()
 
@@ -131,7 +130,6 @@ def nation_with_territory(db: Session, test_player: Player):
     db.add(TerritoryPopulation(
         territory_id=territory.id,
         current=POPULATION_START * 10,
-        growth_rate=0.01,
     ))
     db.flush()
     return nation, territory
@@ -230,7 +228,7 @@ class TestMineCurrencyCost:
         )
         territory = _make_territory(db, "mine-poor-001", nation_id=nation.id, is_colonized=True)
         nation.home_territory_id = territory.id
-        db.add(TerritoryPopulation(territory_id=territory.id, current=500, growth_rate=0.01))
+        db.add(TerritoryPopulation(territory_id=territory.id, current=500))
         db.commit()
 
         resp = auth_client.post("/api/facilities", json={"territory_id": territory.id, "type": "mine"})
@@ -271,7 +269,7 @@ class TestRefineryCurrencyCost:
         )
         territory = _make_territory(db, "ref-poor-001", nation_id=nation.id, is_colonized=True)
         nation.home_territory_id = territory.id
-        db.add(TerritoryPopulation(territory_id=territory.id, current=500, growth_rate=0.01))
+        db.add(TerritoryPopulation(territory_id=territory.id, current=500))
         db.commit()
 
         resp = auth_client.post("/api/facilities", json={"territory_id": territory.id, "type": "refinery"})
@@ -279,14 +277,14 @@ class TestRefineryCurrencyCost:
 
 
 # ===========================================================================
-# 4. SHIPYARD BUILD — 1000 currency cost
+# 4. SHIPYARD BUILD — 2000 currency cost
 # ===========================================================================
 
 
 class TestShipyardCurrencyCost:
-    """Building a shipyard must deduct 1000 currency."""
+    """Building a shipyard must deduct 2000 currency."""
 
-    def test_shipyard_deducts_1000_currency(
+    def test_shipyard_deducts_2000_currency(
         self, db: Session, auth_client, nation_with_territory
     ):
         nation, territory = nation_with_territory
@@ -312,22 +310,22 @@ class TestShipyardCurrencyCost:
         )
         territory = _make_territory(db, "sy-poor-001", nation_id=nation.id, is_colonized=True)
         nation.home_territory_id = territory.id
-        db.add(TerritoryPopulation(territory_id=territory.id, current=500, growth_rate=0.01))
+        db.add(TerritoryPopulation(territory_id=territory.id, current=500))
         db.commit()
 
         resp = auth_client.post("/api/facilities", json={"territory_id": territory.id, "type": "shipyard"})
         assert resp.status_code == 409, resp.text
 
-    def test_shipyard_with_exactly_1000_currency_succeeds(
+    def test_shipyard_with_exactly_2000_currency_succeeds(
         self, db: Session, auth_client, test_player: Player
     ):
-        """Exactly 1000 currency is sufficient — boundary condition."""
+        """Exactly 2000 currency is sufficient — boundary condition."""
         nation = _make_nation_with_resources(
             db, test_player, minerals=1000, fuel=1000, currency=SHIPYARD_CURRENCY_COST
         )
         territory = _make_territory(db, "sy-exact-001", nation_id=nation.id, is_colonized=True)
         nation.home_territory_id = territory.id
-        db.add(TerritoryPopulation(territory_id=territory.id, current=500, growth_rate=0.01))
+        db.add(TerritoryPopulation(territory_id=territory.id, current=500))
         db.commit()
 
         resp = auth_client.post("/api/facilities", json={"territory_id": territory.id, "type": "shipyard"})

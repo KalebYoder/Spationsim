@@ -4,6 +4,8 @@ import { useNation } from '../hooks/useNation'
 import { diploColor } from '../hooks/useDiplomacy'
 import { PageHeader, Card, SectionLabel, Badge, Btn } from '../components/ui'
 
+const TRADE_STYLE = { color: '#7aafb8', border: '#2a4e5a', bg: '#0e1f24' }
+
 const WAR_STYLE    = { color: '#c0726a', bg: '#2e1515', border: '#6b2a2a' }
 const FRIEND_STYLE = { color: '#5a8a62', bg: '#152318', border: '#2a4e30' }
 
@@ -402,6 +404,22 @@ export default function NationProfile() {
                 targetNationId={nationId}
                 onAction={handleFriendAction}
               />
+              {currentStatus !== 'war' && currentStatus !== 'war_pending' && (
+                <button
+                  onClick={() => navigate(`/trade?with=${nationId}`)}
+                  style={{
+                    padding: '7px 14px',
+                    borderRadius: 'var(--radius-sm)',
+                    border: `1px solid ${TRADE_STYLE.border}`,
+                    background: 'transparent',
+                    color: TRADE_STYLE.color,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Propose Trade
+                </button>
+              )}
             </div>
           )}
         </div>

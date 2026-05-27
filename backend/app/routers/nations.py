@@ -185,6 +185,20 @@ def get_my_territories(
     return db.query(Territory).filter(Territory.nation_id == nation.id).all()
 
 
+@router.get("/list")
+def list_other_nations(
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    others = db.query(Nation).order_by(Nation.name).all()
+    return [
+        {"id": n.id, "name": n.name}
+        for n in others
+        if nation is None or n.id != nation.id
+    ]
+
+
 @router.get("/{nation_id}", response_model=PublicNationResponse)
 def get_nation_public(
     nation_id: int,

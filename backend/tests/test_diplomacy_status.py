@@ -163,11 +163,11 @@ def other_nation(db: Session, other_player: Player) -> Nation:
 class TestSetDiplomacyStatus:
     """PUT /api/diplomacy/{target_nation_id} correctly updates status."""
 
-    def test_set_friendly(self, db: Session, auth_client, test_player, test_nation, other_nation):
+    def test_set_friendly_via_put_rejected(self, db: Session, auth_client, test_player, test_nation, other_nation):
+        """PUT /api/diplomacy only accepts neutral/war; friendly is set via friend-request flow."""
         db.commit()
         resp = auth_client.put(f"/api/diplomacy/{other_nation.id}", json={"status": "friendly"})
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["status"] == "friendly"
+        assert resp.status_code == 422
 
     def test_set_war_creates_pending(self, db: Session, auth_client, test_player, test_nation, other_nation):
         """Declaring war returns war_pending — full war starts after 2 ticks."""
@@ -247,7 +247,7 @@ class TestSetDiplomacyStatus:
         assert resp.status_code == 409, resp.text
         assert "24" in resp.json()["detail"]
 
-    def test_war_to_friendly_blocked_within_24h(
+    def test_war_to_neutral_blocked_within_24h(
         self, db: Session, auth_client, test_player, test_nation, other_nation
     ):
         a, b = min(test_nation.id, other_nation.id), max(test_nation.id, other_nation.id)
@@ -256,7 +256,7 @@ class TestSetDiplomacyStatus:
             updated_at=datetime.now(timezone.utc),
         ))
         db.commit()
-        resp = auth_client.put(f"/api/diplomacy/{other_nation.id}", json={"status": "friendly"})
+        resp = auth_client.put(f"/api/diplomacy/{other_nation.id}", json={"status": "neutral"})
         assert resp.status_code == 409, resp.text
 
     def test_war_to_neutral_allowed_after_24h(
@@ -368,7 +368,7 @@ class TestFleetDispatchByDiplomacy:
         my_nation = _make_nation(db, test_player, "My Nation")
         my_home = _make_territory(db, "0,0", nation_id=my_nation.id, is_colonized=True)
         my_nation.home_territory_id = my_home.id
-        db.add(TerritoryPopulation(territory_id=my_home.id, current=500, growth_rate=0.01))
+        db.add(TerritoryPopulation(territory_id=my_home.id, current=500))
         _make_fleet(db, my_nation.id, my_home.id, unit_count=20)
 
         other_p = _make_player(db, "enemy", "enemy@example.com")

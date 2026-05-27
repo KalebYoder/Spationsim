@@ -12,6 +12,7 @@ from .event import Event
 from .resource_log import ResourceLog
 from .chat_message import ChatMessage
 from .mail_message import MailMessage
+from .trade import Trade
 
 __all__ = [
     "Player",
@@ -29,4 +30,5 @@ __all__ = [
     "ResourceLog",
     "ChatMessage",
     "MailMessage",
+    "Trade",
 ]

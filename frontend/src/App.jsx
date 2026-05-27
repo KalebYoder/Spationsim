@@ -17,6 +17,7 @@ import NationProfile from './pages/NationProfile'
 import Mail from './pages/Mail'
 import EventLog from './pages/EventLog'
 import FriendsList from './pages/FriendsList'
+import Trade from './pages/Trade'
 
 function NationGate({ children }) {
   const { player } = useAuth()
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/map"        element={<MapView />} />
           <Route path="/diplomacy"      element={<Diplomacy />} />
           <Route path="/friends"        element={<FriendsList />} />
+          <Route path="/trade"          element={<Trade />} />
           <Route path="/nations/:id"    element={<NationProfile />} />
           <Route path="/mail"           element={<Mail />} />
           <Route path="/log"        element={<EventLog />} />

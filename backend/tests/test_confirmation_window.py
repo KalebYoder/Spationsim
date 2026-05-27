@@ -477,10 +477,13 @@ class TestTickFleetArrivalAtEnemyTerritory:
 
         fresh = SessionLocal()
         try:
-            # Stationed fleet units must not have changed
+            # Stationed fleet must not have absorbed the arriving fleet.
+            # It may lose 1 unit to holding attrition (1% per tick, min 1),
+            # but must not gain the arriving fleet's 10 units.
             stationed_after = fresh.get(Fleet, stationed_id)
             assert stationed_after is not None, "Pre-existing fleet must still exist"
-            assert stationed_after.unit_count == 20, (
+            assert stationed_after.unit_count <= 20, "Units should not increase"
+            assert stationed_after.unit_count >= 18, (
                 "Enemy-arrival fleet must not be merged into the holding fleet at enemy territory"
             )
             # The arriving fleet should still exist independently

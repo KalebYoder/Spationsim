@@ -13,8 +13,9 @@ const NAV = [
   { to: '/planets',    label: 'Planets'                       },
   { to: '/map',        label: 'Map'                           },
   { to: '/diplomacy',  label: 'Diplomacy'                     },
-  { to: '/friends',    label: 'Friends',    friendBadge: true },
-  { to: '/mail',       label: 'Mail',       badge: true       },
+  { to: '/friends',    label: 'Friends',    friendBadge: true  },
+  { to: '/trade',      label: 'Trade',      tradeBadge: true   },
+  { to: '/mail',       label: 'Mail',       badge: true        },
   { to: '/log',        label: 'Event Log'                     },
 ]
 
@@ -35,6 +36,7 @@ export default function Layout() {
   const { nation } = useNation()
   const [mailUnread, setMailUnread] = useState(0)
   const [friendPending, setFriendPending] = useState(0)
+  const [tradeIncoming, setTradeIncoming] = useState(0)
 
   useEffect(() => {
     const fetchUnread = () => {
@@ -61,6 +63,19 @@ export default function Layout() {
     }
     fetchFriendPending()
     const id = setInterval(fetchFriendPending, 60000)
+    return () => clearInterval(id)
+  }, [nation])
+
+  useEffect(() => {
+    if (!nation) return
+    const fetchTrade = () => {
+      fetch('/api/trade', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => setTradeIncoming(data.filter(t => t.to_nation_id === nation.id).length))
+        .catch(() => {})
+    }
+    fetchTrade()
+    const id = setInterval(fetchTrade, 60000)
     return () => clearInterval(id)
   }, [nation])
 
@@ -118,7 +133,7 @@ export default function Layout() {
 
         {/* Nav links */}
         <div style={{ flex: 1, padding: '0 8px' }}>
-          {NAV.map(({ to, label, end, badge, friendBadge }) => (
+          {NAV.map(({ to, label, end, badge, friendBadge, tradeBadge }) => (
             <NavLink key={to} to={to} end={end} style={navLinkStyle}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 {label}
@@ -146,6 +161,19 @@ export default function Layout() {
                     lineHeight: 1.4,
                   }}>
                     {friendPending}
+                  </span>
+                )}
+                {tradeBadge && tradeIncoming > 0 && (
+                  <span style={{
+                    background: 'var(--amber)',
+                    color: '#000',
+                    borderRadius: 10,
+                    padding: '1px 6px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    lineHeight: 1.4,
+                  }}>
+                    {tradeIncoming}
                   </span>
                 )}
               </span>
