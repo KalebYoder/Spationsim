@@ -163,6 +163,115 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ---
 
+## New Mechanics
+
+### Dissent System
+
+Dissent is a per-territory integer (0–100) representing political unrest caused by military pressure. It degrades production and suppresses population growth. It decays over time and can be mitigated by a new facility. It does not punish inaction or offline play — it rises only because an enemy fleet is physically present or because the nation is actively at war.
+
+---
+
+#### Storage
+
+New table, mirroring the pattern of `territory_population`:
+
+```sql
+CREATE TABLE territory_dissent (
+    territory_id  INTEGER REFERENCES territories(id) PRIMARY KEY,
+    dissent       INTEGER NOT NULL DEFAULT 0,
+    last_updated  TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+Only colonized territories get a row. Void nodes (no population) do not accumulate dissent.
+
+---
+
+#### What Raises Dissent (per tick)
+
+| Trigger | Dissent added | Notes |
+|---|---|---|
+| Nation is at war | +2 to **all** owned territories | War-wide cost; unavoidable while at war |
+| Enemy fleet holding on this territory | +5 | Replaces (does not stack with) the engaged bonus |
+| Enemy fleet engaged on this territory | +8 | Active battle zone |
+| Territory undefended and actively being resource-drained | +10 | Looting is directly felt by the population |
+| Territory just conquered (changed hands) | Set to 60 instantly | Conquered populations start hostile |
+
+**Hard rules:**
+- Dissent is clamped to [0, 100].
+- Dissent does not rise on vacation-mode nations — the tick is frozen for them, so no accumulation occurs.
+- Dissent does not rise from the war declaration window or fleet dispatch alone. Only physically present enemy fleets and the war-state flag trigger dissent. This prevents declaration-and-recall harassment.
+
+---
+
+#### What Dissent Affects
+
+**Production penalty** (minerals and fuel only; currency income is unaffected):
+
+| Dissent | Production multiplier |
+|---|---|
+| 0–19 | 1.00 — no effect |
+| 20–39 | 0.90 — 10% reduction (grumbling) |
+| 40–59 | 0.75 — 25% reduction (unrest) |
+| 60–79 | 0.55 — 45% reduction (protest) |
+| 80–100 | 0.30 — 70% reduction (revolt) |
+
+**Population growth suppression:**
+
+| Dissent | Growth effect |
+|---|---|
+| 0–39 | Unaffected |
+| 40–59 | Growth rate halved |
+| 60–100 | Growth rate zeroed (not negative — population does not flee or die) |
+
+---
+
+#### Decay (per tick)
+
+| Condition | Decay per tick |
+|---|---|
+| At peace, no enemy fleet | −3 |
+| At war, no enemy fleet on this territory | −1 |
+| Enemy fleet holding or engaged on this territory | 0 (no decay) |
+
+At war with no enemy fleet present, non-frontline territories accumulate a net **+1 dissent/tick** (+2 war penalty − 1 decay). A Settlement Hub raises decay to −3, producing a net −1/tick and keeping non-frontline territories stable during a prolonged war. Front-line planets under occupation continue to climb. A planet maxed at 100 dissent recovers to 0 in ~33 ticks (66 hours) at peacetime rate, or ~100 ticks at war rate without a hub (no occupation).
+
+---
+
+#### Event Logging
+
+Log an event to the events table only when dissent **crosses a threshold** (20, 40, 60, 80 — and back down through each). Do not log every tick delta. The threshold-crossing event fires a player-visible notification; the raw value is always available in the territory detail view.
+
+---
+
+#### Settlement Hub (New Facility)
+
+One new facility that explicitly mitigates dissent. No other facilities get hidden morale bonuses.
+
+| Field | Value |
+|---|---|
+| Type key | `settlement_hub` |
+| Build cost | 200 minerals + 100 fuel + 3000¤ |
+| Population required | 20 assigned |
+| Effect | +2 additional dissent decay per tick on this territory |
+| Limit | One per territory (enforced at endpoint level) |
+
+Combined decay with a Settlement Hub:
+
+| Condition | Decay per tick |
+|---|---|
+| At peace + hub | −5 |
+| At war, no occupation + hub | −3 (exactly cancels the +2/tick war penalty — hub keeps a non-frontline planet stable) |
+| Under occupation + hub | −2 (insufficient to offset +5/+8 occupation; hub slows the rise but does not halt it) |
+
+---
+
+#### Attacker-Side Dissent
+
+Deferred to post-beta. The attacker currently does not accumulate dissent. If veteran feedback during beta indicates wars last too long with no internal political cost to the aggressor, add +2/tick to all attacker territories (same as the defender's war penalty) as a one-line change. See Open Questions.
+
+---
+
 ## What's Still To Do
 
 ### Remaining Feature Work
@@ -214,6 +323,12 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 ## Open Questions
 
 - Does population die permanently in combat, or does it reduce and recover? (Significant design weight — bring to veteran players)
+- **Dissent: attacker-side penalty?** Should the attacker also accumulate +2/tick dissent on their home territories for the duration of a war? Argument for: prolonged aggressive wars should have internal political cost. Argument against: in a 20–50 player beta, making aggression too costly reduces conflict below the threshold needed to test the war system. Recommendation: defer to post-beta unless veteran feedback says wars last too long.
+- **Dissent: public or private?** Should a territory's dissent value be visible on the public nation profile? Public dissent creates interesting espionage-lite gameplay (attackers can see which planets are vulnerable) but lets third parties opportunistically pile on a nation already under pressure. Bring to veteran players.
+- **Dissent: currency penalty?** The current design only penalizes mineral/fuel production, not currency income. If financially-focused players should feel war pressure more directly, add a currency multiplier at the same thresholds. Defer to beta feedback.
+- **Dissent on recapture/liberation:** If Nation A captures a planet from Nation B (dissent set to 60), and Nation B then retakes it, does dissent reset to 0 (liberation bonus) or continue from its current value? A reset rewards successful defense and is trivially implementable. Decide before territory conquest is implemented.
+- **Dissent before conquest is implemented:** Dissent is useful as a pure combat-pressure mechanic (rising from holding/engaged fleets) even before territory conquest lands. The conquest-reset behavior (set to 60 on capture, reset on liberation) can be specified now and implemented alongside conquest.
+Developer thoughts: Dissent should be raised for a planet when it specifically is beseiged, but maybe not for other planets when they are being attacked. Maybe more dissent for aggression wars and less for defense (requires creating a snapshot of original territory at war declaration).
 - Population growth rate tuning and whether specific infrastructure types (beyond mines/refineries) should influence it.
 - Whether colony vulnerability window (low population, low development) creates enough natural strategic depth or needs explicit mechanics.
 - **Vacation mode as a territory blocker**: a player in vacation mode indefinitely still denies staging ground during alliance wars. The 48h lockout solves rapid in/out exploitation but not a committed long-term blocker. Possible solutions (not yet designed): war-declaration entry block; minimum fleet-presence requirement to invoke vacation; admin enforcement. Defer until beta feedback confirms whether this is a real problem in practice.
@@ -243,6 +358,7 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 | Fleet fuel upkeep | 1 fuel/tick per fighter not docked on own territory | "Docked" = stationed on a territory owned by that nation. All other fleet statuses and stationed fleets on foreign/unclaimed territory pay upkeep. Creates ongoing fuel drain for sustained military projection. |
 | Power metrics | Military strength (1 per fighter) + industrial strength (mine=1, refinery=1, shipyard=2) | Computed at query time, not stored. Visible to all on nation profiles; visible to self on home page. Provides a competitive reference frame and a rough matchmaking signal. |
 | Friends system | Separate from diplomacy; friend_pending blocks planet dispatch | Friend requests use the diplomacy table (status: friend_pending/friendly). A nation in friend_pending or friendly status cannot have fleets dispatched to their planets, treating them like neutral for combat purposes. |
+| Dissent system | Per-territory integer 0–100; rises from war and enemy fleet presence; decays over time; penalizes production and population growth | Sources: +2/tick (at war, all territories), +5 (holding fleet), +8 (engaged fleet), +10 (actively drained), instant set to 60 (conquest). Decay: −3/tick (peace), −1/tick (war, no occupation), 0 (occupied). Production multiplier at 5 thresholds (1.00 → 0.30). Growth suppression at 40+ and zeroed at 60+. Settlement Hub facility (+2 decay/tick, one per territory). Attacker-side dissent deferred to post-beta. Does not rise during vacation mode. |
 
 ---
 
