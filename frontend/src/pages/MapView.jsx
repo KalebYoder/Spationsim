@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNation } from '../hooks/useNation'
 import { useDiplomacy } from '../hooks/useDiplomacy'
 import { PageHeader, Card, Btn } from '../components/ui'
@@ -6,6 +6,8 @@ import { PageHeader, Card, Btn } from '../components/ui'
 const HEX_SIZE = 9
 const SVG_W = 800
 const SVG_H = 640
+// Set to a number to cap fleet dispatch range; null = unlimited
+const FLEET_MAX_RANGE = null
 
 function hexToSvg(q, r) {
   return [
@@ -88,6 +90,19 @@ export default function MapView() {
     ? Math.ceil(hexDistance(source.node_key, dest.node_key) / 2)
     : null
 
+  // IDs of territories reachable from the selected source (null when not in deploy mode)
+  const reachableIds = useMemo(() => {
+    if (!source) return null
+    const ids = new Set()
+    for (const t of territories) {
+      if (t.territory_type === 'void') continue
+      if (!FLEET_MAX_RANGE || hexDistance(source.node_key, t.node_key) <= FLEET_MAX_RANGE) {
+        ids.add(t.id)
+      }
+    }
+    return ids
+  }, [source, territories])
+
   const handleDeclareWar = async () => {
     if (!nationPanel) return
     setDeclaringWar(true)
@@ -147,6 +162,9 @@ export default function MapView() {
       setDest(null)
       return
     }
+
+    // Block out-of-range destinations
+    if (reachableIds && !reachableIds.has(t.id)) return
 
     // Otherwise select as destination
     setDest(t)
@@ -229,10 +247,13 @@ export default function MapView() {
               const isDest = dest?.id === t.id
               const isHovered = t.id === hovered
               const hasfighters = stationedByTerritory[t.id] > 0
+              const isDeployMode = !!source
+              const isReachable = !isDeployMode || (reachableIds?.has(t.id) ?? true)
               const fill = territoryColor(t, nation?.id)
               const baseR = isSource ? 6.5 : isDest ? 6 : isMyTerritory ? 5 : isHovered ? 4.5 : 3.5
               const stroke = isSource ? '#fff' : isDest ? '#f59e0b' : hasfighters && isMyTerritory ? '#3ec9b4' : isHovered ? '#aaa' : 'none'
               const strokeW = isSource || isDest ? 2 : 1
+              const opacity = !isReachable ? 0.15 : (isHovered || isMyTerritory || isSource || isDest ? 1 : 0.75)
 
               return (
                 <g key={t.id}>
@@ -241,8 +262,8 @@ export default function MapView() {
                     fill={fill}
                     stroke={stroke}
                     strokeWidth={strokeW}
-                    opacity={isHovered || isMyTerritory || isSource || isDest ? 1 : 0.75}
-                    style={{ cursor: t.territory_type === 'void' ? 'default' : 'pointer' }}
+                    opacity={opacity}
+                    style={{ cursor: t.territory_type === 'void' || (isDeployMode && !isReachable) ? 'default' : 'pointer' }}
                     onClick={() => handleTerritoryClick(t)}
                     onMouseEnter={() => setHovered(t.id)}
                     onMouseLeave={() => setHovered(null)}

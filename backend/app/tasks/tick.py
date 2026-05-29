@@ -640,6 +640,21 @@ def run_tick():
                     ))
                     continue
 
+            # Pre-generate nodes within vision radius before movement so the
+            # probe's next step is guaranteed to exist in territory_by_key.
+            pre_q, pre_r = _parse_key(current_t.node_key)
+            for gdq in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
+                for gdr in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
+                    if _hex_dist(0, 0, gdq, gdr) > PROBE_VISION_RADIUS:
+                        continue
+                    vq, vr = pre_q + gdq, pre_r + gdr
+                    vkey = f"{vq},{vr}"
+                    if vkey not in territory_by_key:
+                        new_t = generate_territory(vq, vr)
+                        db.add(new_t)
+                        db.flush()
+                        territory_by_key[vkey] = new_t
+
             if probe.status == "in_transit":
                 dest_t = db.get(Territory, probe.destination_territory)
                 if dest_t and current_t.id != dest_t.id:
