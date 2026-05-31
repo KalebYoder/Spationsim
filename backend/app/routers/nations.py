@@ -174,6 +174,68 @@ def exit_vacation(
     db.commit()
 
 
+@router.get("/mine/territories/yields")
+def get_territory_yields(
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    from ..services.territory_yield import compute_territory_yield
+
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    territories = db.query(Territory).filter(Territory.nation_id == nation.id).all()
+    territory_ids = [t.id for t in territories]
+    if not territory_ids:
+        return []
+
+    facility_rows = (
+        db.query(Infrastructure.territory_id, Infrastructure.type, sqlfunc.count())
+        .filter(
+            Infrastructure.territory_id.in_(territory_ids),
+            Infrastructure.type.in_(["mine", "refinery"]),
+            Infrastructure.status == "active",
+        )
+        .group_by(Infrastructure.territory_id, Infrastructure.type)
+        .all()
+    )
+    mine_counts: dict[int, int] = {}
+    refinery_counts: dict[int, int] = {}
+    for tid, ftype, cnt in facility_rows:
+        if ftype == "mine":
+            mine_counts[tid] = cnt
+        else:
+            refinery_counts[tid] = cnt
+
+    fleet_rows = (
+        db.query(Fleet.origin_territory, sqlfunc.sum(Fleet.unit_count))
+        .filter(
+            Fleet.nation_id == nation.id,
+            Fleet.status == "stationed",
+            Fleet.origin_territory.in_(territory_ids),
+        )
+        .group_by(Fleet.origin_territory)
+        .all()
+    )
+    stationed: dict[int, int] = {tid: int(cnt) for tid, cnt in fleet_rows}
+
+    return [
+        {
+            "territory_id": t.id,
+            **compute_territory_yield(
+                territory_type=t.territory_type,
+                mineral_richness=float(t.mineral_richness),
+                fuel_richness=float(t.fuel_richness),
+                mine_count=mine_counts.get(t.id, 0),
+                refinery_count=refinery_counts.get(t.id, 0),
+                stationed_fighters=stationed.get(t.id, 0),
+            ),
+        }
+        for t in territories
+    ]
+
+
 @router.get("/mine/territories", response_model=list[TerritoryResponse])
 def get_my_territories(
     db: Session = Depends(get_db),
@@ -183,6 +245,22 @@ def get_my_territories(
     if not nation:
         raise HTTPException(status_code=404, detail="No nation found")
     return db.query(Territory).filter(Territory.nation_id == nation.id).all()
+
+
+@router.get("/{nation_id}/territories", response_model=list[TerritoryResponse])
+def get_nation_territories(
+    nation_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.get(Nation, nation_id)
+    if not nation:
+        raise HTTPException(status_code=404, detail="Nation not found")
+    return (
+        db.query(Territory)
+        .filter(Territory.nation_id == nation_id, Territory.is_colonized == True)
+        .all()
+    )
 
 
 @router.get("/list")

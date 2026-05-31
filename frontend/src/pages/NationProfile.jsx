@@ -9,7 +9,7 @@ const TRADE_STYLE = { color: '#7aafb8', border: '#2a4e5a', bg: '#0e1f24' }
 const WAR_STYLE    = { color: '#c0726a', bg: '#2e1515', border: '#6b2a2a' }
 const FRIEND_STYLE = { color: '#5a8a62', bg: '#152318', border: '#2a4e30' }
 
-function WarSection({ status, nationName, requestedBy, myNationId, onDeclareWar, onEndWar }) {
+function WarSection({ status, nationName, onDeclareWar }) {
   const [confirmingWar, setConfirmingWar] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -23,37 +23,15 @@ function WarSection({ status, nationName, requestedBy, myNationId, onDeclareWar,
     setConfirmingWar(false)
   }
 
-  const handleEnd = async () => {
-    setSaving(true)
-    setError('')
-    const err = await onEndWar()
-    if (err) setError(err)
-    setSaving(false)
-  }
-
   if (status === 'war') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: WAR_STYLE.color }}>At War</span>
-          <button
-            disabled={saving}
-            onClick={handleEnd}
-            style={{
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-sm)',
-              border: `1px solid ${WAR_STYLE.border}`,
-              background: 'transparent',
-              color: WAR_STYLE.color,
-              fontSize: 13,
-              cursor: saving ? 'not-allowed' : 'pointer',
-              opacity: saving ? 0.6 : 1,
-            }}
-          >
-            {saving ? 'Ending…' : 'End War'}
-          </button>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Propose peace terms via the Trade page
+          </span>
         </div>
-        {error && <div style={{ fontSize: 12, color: 'var(--danger)', maxWidth: 260, textAlign: 'right' }}>{error}</div>}
       </div>
     )
   }
@@ -325,19 +303,6 @@ export default function NationProfile() {
     return null
   }
 
-  const handleEndWar = async () => {
-    const r = await fetch(`/api/diplomacy/${nationId}`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'neutral' }),
-    })
-    const data = await r.json()
-    if (!r.ok) return data.detail || 'Failed to end war'
-    setDiplo(d => ({ ...d, status: data.status }))
-    return null
-  }
-
   const handleFriendAction = async (endpoint) => {
     const r = await fetch(`/api/diplomacy/${nationId}/${endpoint}`, {
       method: 'POST',
@@ -395,7 +360,6 @@ export default function NationProfile() {
                 status={currentStatus}
                 nationName={profile.name}
                 onDeclareWar={handleDeclareWar}
-                onEndWar={handleEndWar}
               />
               <FriendSection
                 status={currentStatus}

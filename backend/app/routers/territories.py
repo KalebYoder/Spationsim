@@ -2,10 +2,12 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..db.database import get_db
+from sqlalchemy import or_
 from ..models.territory import Territory
 from ..models.nation import Nation
 from ..models.player import Player
 from ..models.probe_data import ProbeData
+from ..models.probe_visibility import ProbeVisibility
 from ..schemas.nation import TerritoryResponse, TerritoryMapResponse, TerritoryRenameRequest
 from ..routers.auth import get_current_player
 
@@ -21,18 +23,37 @@ def all_territories(
 ):
     nation = db.query(Nation).filter(Nation.player_id == player.id).first()
 
+    # Territories whose richness values are visible (own + probe_data)
     revealed_ids: set[int] = set()
+    # Territories visible as probe path tiles (existence only, no richness)
+    visibility_ids: set[int] = set()
+
     if nation:
-        own_ids = {t_id for (t_id,) in db.query(Territory.id).filter(Territory.nation_id == nation.id).all()}
+        own_ids = {
+            t_id for (t_id,) in
+            db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
+        }
         probed_ids = {
             t_id for (t_id,) in
             db.query(ProbeData.territory_id).filter(ProbeData.discovered_by == nation.id).all()
         }
+        visibility_ids = {
+            t_id for (t_id,) in
+            db.query(ProbeVisibility.territory_id).filter(ProbeVisibility.nation_id == nation.id).all()
+        }
         revealed_ids = own_ids | probed_ids
 
+    # Visible = claimed by anyone (spec: colonized territories are visible to all)
+    #         + probe path tiles seen by this player
     rows = (
         db.query(Territory, Nation.name)
         .outerjoin(Nation, Territory.nation_id == Nation.id)
+        .filter(
+            or_(
+                Territory.nation_id.is_not(None),   # any claimed territory
+                Territory.id.in_(visibility_ids),   # probe path tile
+            )
+        )
         .all()
     )
     return [

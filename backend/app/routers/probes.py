@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.infrastructure import Infrastructure
 from ..models.nation import Nation
+from ..models.event import Event
 from ..models.probe import Probe
 from ..models.probe_data import ProbeData
 from ..models.territory import Territory
@@ -186,6 +187,61 @@ def dispatch_probe(
         )
 
     db.add(probe)
+    db.commit()
+    db.refresh(probe)
+    return _probe_response(probe, db)
+
+
+@router.post("/{probe_id}/recall", response_model=ProbeResponse)
+def recall_probe(
+    probe_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    probe = db.get(Probe, probe_id)
+    if not probe or probe.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Probe not found or does not belong to you")
+
+    if probe.status != "in_transit":
+        raise HTTPException(status_code=409, detail="Only in-transit probes can be recalled")
+
+    origin = db.get(Territory, probe.origin_territory)
+    current = db.get(Territory, probe.current_territory)
+    if not origin or not current:
+        raise HTTPException(status_code=409, detail="Probe territory data is inconsistent")
+
+    now = datetime.now(timezone.utc)
+
+    if current.id == origin.id:
+        probe.status = "stationed"
+        probe.destination_territory = None
+        probe.arrives_at = None
+        probe.departs_at = None
+    else:
+        cq, cr = _parse_key(current.node_key)
+        oq, or_ = _parse_key(origin.node_key)
+        distance = _hex_dist(cq, cr, oq, or_)
+        probe.destination_territory = origin.id
+        probe.arrives_at = now + timedelta(hours=2 * distance)
+
+    db.add(Event(
+        type="probe_recalled",
+        payload={
+            "probe_id": probe.id,
+            "nation_id": nation.id,
+            "current_territory_id": current.id,
+            "origin_territory_id": origin.id,
+            "recalled_at": now.isoformat(),
+        },
+        scheduled_for=now,
+        processed_at=now,
+        status="processed",
+    ))
+
     db.commit()
     db.refresh(probe)
     return _probe_response(probe, db)

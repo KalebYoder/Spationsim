@@ -125,6 +125,8 @@ class FleetResponse(BaseModel):
     destination_territory_id: int | None
     destination_node_key: str | None
     destination_name: str | None
+    destination_nation_id: int | None
+    destination_has_defenders: bool | None
     arrives_at: str | None
     confirmation_expires_at: str | None
 
@@ -186,8 +188,8 @@ class ColonyShipStatsResponse(BaseModel):
 class UnitStatsResponse(BaseModel):
     type: str
     attack: int
-    defense: int
-    hp: int
+    shields: int
+    structural_integrity: int
     nodes_per_tick: int
     manufacture_cost_minerals: int
     manufacture_cost_fuel: int
@@ -210,6 +212,7 @@ class TerritoryResponse(BaseModel):
     mineral_richness: float
     fuel_richness: float
     distance_from_center: int
+    is_colonized: bool
 
     model_config = {"from_attributes": True}
 

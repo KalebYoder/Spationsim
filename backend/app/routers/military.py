@@ -5,6 +5,7 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.colony_ship import ColonyShip
+from ..models.probe_data import ProbeData, ProbeDataAccess
 from ..models.event import Event
 from ..models.fleet import Fleet
 from ..models.infrastructure import Infrastructure
@@ -12,6 +13,7 @@ from ..models.nation import Nation
 from ..models.territory import Territory
 from ..models.territory_population import TerritoryPopulation
 from ..models.player import Player
+from ..services.pathfinding import compute_reachable_ids
 from ..schemas.nation import (
     ClaimTerritoryResponse,
     ColonyShipCargoRequest,
@@ -55,6 +57,21 @@ def _hex_distance(key_a: str, key_b: str) -> int:
 def _fleet_response(fleet: Fleet, db: Session) -> FleetResponse:
     origin = db.get(Territory, fleet.origin_territory) if fleet.origin_territory else None
     dest = db.get(Territory, fleet.destination_territory) if fleet.destination_territory else None
+
+    dest_nation_id = dest.nation_id if dest else None
+    dest_has_defenders = None
+    if dest and dest.nation_id and dest.nation_id != fleet.nation_id:
+        defender = (
+            db.query(Fleet)
+            .filter(
+                Fleet.nation_id == dest.nation_id,
+                Fleet.origin_territory == dest.id,
+                Fleet.status == "stationed",
+            )
+            .first()
+        )
+        dest_has_defenders = defender is not None and defender.unit_count > 0
+
     return FleetResponse(
         id=fleet.id,
         unit_count=fleet.unit_count,
@@ -68,6 +85,8 @@ def _fleet_response(fleet: Fleet, db: Session) -> FleetResponse:
         destination_territory_id=fleet.destination_territory,
         destination_node_key=dest.node_key if dest else None,
         destination_name=dest.name if dest else None,
+        destination_nation_id=dest_nation_id,
+        destination_has_defenders=dest_has_defenders,
         arrives_at=fleet.arrives_at.isoformat() if fleet.arrives_at else None,
         confirmation_expires_at=fleet.confirmation_expires_at.isoformat() if fleet.confirmation_expires_at else None,
     )
@@ -108,8 +127,8 @@ def get_units(
         UnitStatsResponse(
             type=unit_type,
             attack=stats["attack"],
-            defense=stats["defense"],
-            hp=stats["hp"],
+            shields=stats["shields"],
+            structural_integrity=stats["structural_integrity"],
             nodes_per_tick=stats["nodes_per_tick"],
             manufacture_cost_minerals=stats["manufacture_cost_minerals"],
             manufacture_cost_fuel=stats["manufacture_cost_fuel"],
@@ -172,7 +191,10 @@ def manufacture_starfighter(
             detail=f"Insufficient unassigned population (need {body.quantity}, have {unassigned})",
         )
 
-    # Consume population (deduct from most-populated territories first)
+    # Deduct from territory current population only. The richness-based cap is
+    # never modified, so population regrows naturally each tick. Fighter deaths
+    # do not restore population — pop spent at manufacture is permanently gone
+    # when the unit is destroyed in combat.
     territory_ids = [
         t_id for (t_id,) in
         db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
@@ -241,6 +263,16 @@ def send_fleet(
         raise HTTPException(status_code=404, detail="Destination territory not found")
     if body.from_territory_id == body.to_territory_id:
         raise HTTPException(status_code=409, detail="Origin and destination must differ")
+
+    # Pathfinding reachability check — destination must be connected via passable tiles
+    all_territories = db.query(Territory).all()
+    territory_dicts = [
+        {"id": t.id, "node_key": t.node_key, "territory_type": t.territory_type, "nation_id": t.nation_id}
+        for t in all_territories
+    ]
+    reachable = compute_reachable_ids(origin.node_key, nation.id, territory_dicts)
+    if dest.id not in reachable:
+        raise HTTPException(status_code=409, detail="Destination is not reachable from origin")
 
     # Gate dispatch by diplomacy status and destination territory type
     if dest.nation_id and dest.nation_id != nation.id:
@@ -403,6 +435,110 @@ def recall_fleet(
     return _fleet_response(fleet, db)
 
 
+@router.post("/fleets/{fleet_id}/conquer", response_model=ClaimTerritoryResponse)
+def conquer_territory(
+    fleet_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    fleet = db.get(Fleet, fleet_id)
+    if not fleet or fleet.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
+
+    if fleet.status != "engaged":
+        raise HTTPException(status_code=409, detail="Fleet must be engaged to conquer territory")
+
+    dest = db.get(Territory, fleet.destination_territory)
+    if not dest:
+        raise HTTPException(status_code=404, detail="Fleet has no destination territory")
+
+    if dest.territory_type == "void":
+        raise HTTPException(status_code=409, detail="Void territories cannot be conquered")
+
+    if not dest.nation_id or dest.nation_id == nation.id:
+        raise HTTPException(status_code=409, detail="Territory must be owned by an enemy nation")
+
+    if not is_at_war(db, nation.id, dest.nation_id):
+        raise HTTPException(status_code=409, detail="Not at war with the territory's owner")
+
+    defender = (
+        db.query(Fleet)
+        .filter(
+            Fleet.nation_id == dest.nation_id,
+            Fleet.origin_territory == dest.id,
+            Fleet.status == "stationed",
+        )
+        .first()
+    )
+    if defender and defender.unit_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Territory has defenders — eliminate them before conquering",
+        )
+
+    now = datetime.now(timezone.utc)
+    former_owner_id = dest.nation_id
+
+    dest.nation_id = nation.id
+    dest.is_colonized = True
+    dest.colonized_at = now
+
+    # Remove stale probe data — conquered territory is now visible on the map
+    for pd in db.query(ProbeData).filter(ProbeData.territory_id == dest.id).all():
+        db.query(ProbeDataAccess).filter(ProbeDataAccess.probe_data_id == pd.id).delete()
+    db.query(ProbeData).filter(ProbeData.territory_id == dest.id).delete()
+
+    fleet.status = "stationed"
+    fleet.origin_territory = dest.id
+    fleet.destination_territory = None
+    fleet.arrives_at = None
+    fleet.departs_at = None
+    fleet.confirmation_expires_at = None
+
+    db.add(Event(
+        type="territory_conquered",
+        payload={
+            "fleet_id": fleet.id,
+            "attacker_nation_id": nation.id,
+            "defender_nation_id": former_owner_id,
+            "territory_id": dest.id,
+            "node_key": dest.node_key,
+            "conquered_at": now.isoformat(),
+        },
+        scheduled_for=now,
+        processed_at=now,
+        status="processed",
+    ))
+
+    db.add(Event(
+        type="territory_lost_to_conquest",
+        payload={
+            "nation_id": former_owner_id,
+            "conquered_by_nation_id": nation.id,
+            "territory_id": dest.id,
+            "node_key": dest.node_key,
+            "conquered_at": now.isoformat(),
+        },
+        scheduled_for=now,
+        processed_at=now,
+        status="processed",
+    ))
+
+    db.commit()
+    db.refresh(dest)
+    return ClaimTerritoryResponse(
+        territory_id=dest.id,
+        node_key=dest.node_key,
+        name=dest.name,
+        nation_id=dest.nation_id,
+        colonized_at=dest.colonized_at.isoformat(),
+    )
+
+
 @router.post("/fleets/{fleet_id}/claim", response_model=ClaimTerritoryResponse)
 def claim_territory(
     fleet_id: int,
@@ -435,6 +571,11 @@ def claim_territory(
     territory.is_colonized = True
     territory.nation_id = nation.id
     territory.colonized_at = now
+
+    # Remove stale probe data — territory is now on the map, visible to all
+    for pd in db.query(ProbeData).filter(ProbeData.territory_id == territory.id).all():
+        db.query(ProbeDataAccess).filter(ProbeDataAccess.probe_data_id == pd.id).delete()
+    db.query(ProbeData).filter(ProbeData.territory_id == territory.id).delete()
 
     db.add(Event(
         type="territory_claimed",

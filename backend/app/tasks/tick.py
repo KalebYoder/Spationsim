@@ -14,9 +14,12 @@ from ..models.territory_population import TerritoryPopulation
 from ..models.diplomacy import Diplomacy
 from ..models.probe import Probe
 from ..models.probe_data import ProbeData
+from ..models.probe_visibility import ProbeVisibility
+from ..services.combat import resolve_combat_tick
+from ..services.logistics import compute_logistics_fuel_cost
 from ..constants import (
     POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER, PROBE_VISION_RADIUS,
-    UNIT_STATS, FACILITY_COSTS, DEMOLISH_REFUND_FRACTION,
+    UNIT_STATS, FACILITY_COSTS, DEMOLISH_REFUND_FRACTION, LOGISTICS_FUEL_K,
 )
 from ..map_gen import generate_territory
 
@@ -171,6 +174,11 @@ def run_tick():
                 .scalar()
             )
             fuel_delta -= (in_space_units + stationed_foreign_units)
+
+            # Logistics upkeep: quadratic fuel cost on territory count.
+            # The Nth territory costs N fuel/tick; total = N(N+1)/2.
+            # k=1 is the beta starting point; adjust LOGISTICS_FUEL_K to tune.
+            fuel_delta -= compute_logistics_fuel_cost(len(territory_ids), k=LOGISTICS_FUEL_K)
 
             # Grow population in each territory (5% per tick, capped by richness)
             pop_rows = (
@@ -456,8 +464,10 @@ def run_tick():
             if defender_fleet and defender_fleet.unit_count > 0:
                 attacker_count = fleet.unit_count
                 defender_count = defender_fleet.unit_count
-                attacker_losses = max(1, round(defender_count * stats["attack"] / stats["hp"]))
-                defender_losses = max(1, round(attacker_count * stats["attack"] / stats["hp"]))
+                attacker_losses, defender_losses = resolve_combat_tick(
+                    attacker_count, stats,
+                    defender_count, stats,
+                )
                 fleet.unit_count = max(0, attacker_count - attacker_losses)
                 defender_fleet.unit_count = max(0, defender_count - defender_losses)
 
@@ -585,6 +595,15 @@ def run_tick():
                 status="processed",
             ))
 
+        def _record_visibility(nation_id: int, territory_id: int) -> None:
+            """Mark a territory as seen by a nation (probe path tile). Idempotent."""
+            exists = db.query(ProbeVisibility).filter(
+                ProbeVisibility.nation_id == nation_id,
+                ProbeVisibility.territory_id == territory_id,
+            ).first()
+            if not exists:
+                db.add(ProbeVisibility(nation_id=nation_id, territory_id=territory_id))
+
         # Build territory lookup for probe movement
         all_territories = db.query(Territory).all()
         territory_by_key = {t.node_key: t for t in all_territories}
@@ -655,6 +674,9 @@ def run_tick():
                         db.flush()
                         territory_by_key[vkey] = new_t
 
+            # Record that this probe physically visited its current tile.
+            _record_visibility(probe.nation_id, current_t.id)
+
             if probe.status == "in_transit":
                 dest_t = db.get(Territory, probe.destination_territory)
                 if dest_t and current_t.id != dest_t.id:
@@ -666,12 +688,33 @@ def run_tick():
                     if next_t:
                         probe.current_territory = next_t.id
                         current_t = next_t
+                        # Record visibility for the tile the probe just moved into.
+                        _record_visibility(probe.nation_id, current_t.id)
                 if dest_t and current_t.id == dest_t.id:
                     probe.status = "stationed"
                     probe.origin_territory = current_t.id
                     probe.destination_territory = None
                     probe.arrives_at = None
                     probe.departs_at = None
+
+                    # Record probe data (richness) only for the destination tile.
+                    if current_t.territory_type != "void":
+                        existing_pd = db.query(ProbeData).filter(
+                            ProbeData.territory_id == current_t.id,
+                            ProbeData.discovered_by == probe.nation_id,
+                        ).first()
+                        if existing_pd:
+                            existing_pd.mineral_richness = current_t.mineral_richness
+                            existing_pd.fuel_richness = current_t.fuel_richness
+                            existing_pd.discovered_at = tick_at
+                        else:
+                            db.add(ProbeData(
+                                territory_id=current_t.id,
+                                discovered_by=probe.nation_id,
+                                mineral_richness=current_t.mineral_richness,
+                                fuel_richness=current_t.fuel_richness,
+                            ))
+
                     db.add(Event(
                         type="probe_stationed",
                         payload={
@@ -686,45 +729,6 @@ def run_tick():
                         status="processed",
                     ))
 
-            scan_q, scan_r = _parse_key(current_t.node_key)
-
-            # Generate any uncharted territories within probe vision radius
-            for dq in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
-                for dr in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
-                    if _hex_dist(0, 0, dq, dr) > PROBE_VISION_RADIUS:
-                        continue
-                    vq, vr = scan_q + dq, scan_r + dr
-                    vkey = f"{vq},{vr}"
-                    if vkey not in territory_by_key:
-                        new_t = generate_territory(vq, vr)
-                        db.add(new_t)
-                        db.flush()
-                        territory_by_key[vkey] = new_t
-
-            # Record ProbeData for non-void territories in vision radius
-            for dq in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
-                for dr in range(-PROBE_VISION_RADIUS, PROBE_VISION_RADIUS + 1):
-                    if _hex_dist(0, 0, dq, dr) > PROBE_VISION_RADIUS:
-                        continue
-                    vq, vr = scan_q + dq, scan_r + dr
-                    t = territory_by_key.get(f"{vq},{vr}")
-                    if not t or t.territory_type == "void":
-                        continue
-                    existing = db.query(ProbeData).filter(
-                        ProbeData.territory_id == t.id,
-                        ProbeData.discovered_by == probe.nation_id,
-                    ).first()
-                    if existing:
-                        existing.mineral_richness = t.mineral_richness
-                        existing.fuel_richness = t.fuel_richness
-                        existing.discovered_at = tick_at
-                    else:
-                        db.add(ProbeData(
-                            territory_id=t.id,
-                            discovered_by=probe.nation_id,
-                            mineral_richness=t.mineral_richness,
-                            fuel_richness=t.fuel_richness,
-                        ))
 
         db.add(Event(
             type="tick",

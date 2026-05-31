@@ -151,7 +151,7 @@ export default function MapView() {
       if (t.nation_id === nation?.id && stationedByTerritory[t.id] > 0) {
         setSource(t)
         setDest(null)
-        setSendQty(1)
+        setSendQty(stationedByTerritory[t.id])  // default: move entire fleet
       }
       return
     }
@@ -330,15 +330,38 @@ export default function MapView() {
                   )}
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>Quantity</div>
-                  <input
-                    type="number"
-                    min={1}
-                    max={maxQty}
-                    value={sendQty}
-                    onChange={e => setSendQty(Math.max(1, Math.min(maxQty, parseInt(e.target.value) || 1)))}
-                    style={{ width: 70, padding: '5px 8px', background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 13 }}
-                  />
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
+                    Send
+                    {sendQty < maxQty && (
+                      <span style={{ color: 'var(--amber)', marginLeft: 6, textTransform: 'none', letterSpacing: 0 }}>
+                        — splits fleet
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={maxQty}
+                      value={sendQty}
+                      onChange={e => setSendQty(Math.max(1, Math.min(maxQty, parseInt(e.target.value) || 1)))}
+                      style={{ width: 70, padding: '5px 8px', background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 13 }}
+                    />
+                    {sendQty < maxQty && (
+                      <button
+                        onClick={() => setSendQty(maxQty)}
+                        style={{ fontSize: 11, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+                        title="Send all"
+                      >
+                        All
+                      </button>
+                    )}
+                  </div>
+                  {sendQty < maxQty && (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+                      {maxQty - sendQty} remain behind
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
                   <Btn

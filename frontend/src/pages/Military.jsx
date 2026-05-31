@@ -41,7 +41,7 @@ function ManufactureForm({ unit, shipyardTerritories, onManufactured, onCancel }
       <div style={{ marginBottom: 12, fontWeight: 500 }}>
         Manufacture {UNIT_LABELS[unit.type] || unit.type}
         <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 12 }}>
-          ATK {unit.attack} · DEF {unit.defense} · HP {unit.hp}
+          ATK {unit.attack} · Shields {unit.shields} · Str. Int. {unit.structural_integrity}
         </span>
       </div>
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -227,6 +227,8 @@ export default function Military() {
   const [buildingColonyShip, setBuildingColonyShip] = useState(false)
   const [claimingFleetId, setClaimingFleetId] = useState(null)
   const [claimError, setClaimError] = useState('')
+  const [fleetActionPending, setFleetActionPending] = useState({})
+  const [fleetActionErrors, setFleetActionErrors] = useState({})
 
   const load = useCallback(async () => {
     try {
@@ -275,10 +277,32 @@ export default function Military() {
     }
   }
 
+  const handleFleetAction = async (fleetId, action) => {
+    setFleetActionErrors(prev => ({ ...prev, [fleetId]: '' }))
+    setFleetActionPending(prev => ({ ...prev, [fleetId]: action }))
+    try {
+      const r = await fetch(`/api/military/fleets/${fleetId}/${action}`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await r.json()
+      if (!r.ok) {
+        setFleetActionErrors(prev => ({ ...prev, [fleetId]: data.detail || 'Failed' }))
+        return
+      }
+      load()
+    } catch {
+      setFleetActionErrors(prev => ({ ...prev, [fleetId]: 'Network error' }))
+    } finally {
+      setFleetActionPending(prev => ({ ...prev, [fleetId]: null }))
+    }
+  }
+
   if (loading) return <p style={{ color: 'var(--text-muted)' }}>Loading&hellip;</p>
 
   const stationedFleets = fleets.filter(f => f.status === 'stationed')
   const transitFleets = fleets.filter(f => f.status === 'in_transit')
+  const activeOpFleets = fleets.filter(f => ['pending_confirmation', 'engaged', 'holding'].includes(f.status))
   const totalUnits = fleets.reduce((s, f) => s + f.unit_count, 0)
   const stationedColonyShips = colonyShips.filter(s => s.status === 'stationed')
   const transitColonyShips = colonyShips.filter(s => s.status === 'in_transit')
@@ -322,13 +346,13 @@ export default function Military() {
         {units.length === 0 ? (
           <EmptyState title="No unit types available" body="Build a shipyard to unlock starfighters." />
         ) : (
-          <Table headers={['Unit', 'ATK', 'DEF', 'HP', 'Speed', 'Manufacture Cost', '']}>
+          <Table headers={['Unit', 'ATK', 'Shields', 'Str. Int.', 'Speed', 'Manufacture Cost', '']}>
             {units.map(u => (
               <Tr key={u.type}>
                 <Td><Badge color="rose">{UNIT_LABELS[u.type] || u.type}</Badge></Td>
                 <Td>{u.attack}</Td>
-                <Td>{u.defense}</Td>
-                <Td>{u.hp}</Td>
+                <Td>{u.shields}</Td>
+                <Td>{u.structural_integrity}</Td>
                 <Td muted>{u.nodes_per_tick} node{u.nodes_per_tick !== 1 ? 's' : ''}/tick</Td>
                 <Td muted>{u.manufacture_cost_minerals}M / {u.manufacture_cost_fuel}F / {u.manufacture_cost_currency}¤</Td>
                 <Td>
@@ -461,12 +485,84 @@ export default function Military() {
         </>
       )}
 
-      <SectionLabel>Confirmation Windows</SectionLabel>
-      <Card>
-        <EmptyState
-          title="No pending confirmations"
-          body="Fleets arriving at your territories will appear here. You have 4 hours (2 ticks) to confirm or recall before standing orders execute."
-        />
+      <SectionLabel>Active Operations</SectionLabel>
+      <Card style={{ padding: 0, marginBottom: 28 }}>
+        {activeOpFleets.length === 0 ? (
+          <EmptyState
+            title="No active operations"
+            body="Fleets pending confirmation or engaged at enemy territories appear here."
+          />
+        ) : (
+          <Table headers={['Fleet', 'At', 'Status', 'Actions']}>
+            {activeOpFleets.map(f => {
+              const loc = f.destination_name || f.destination_node_key || '—'
+              const pending = fleetActionPending[f.id]
+              const err = fleetActionErrors[f.id]
+              let statusEl, actions
+
+              if (f.status === 'pending_confirmation') {
+                const expiresAt = f.confirmation_expires_at ? new Date(f.confirmation_expires_at) : null
+                statusEl = (
+                  <span>
+                    <Badge color="amber">Awaiting confirmation</Badge>
+                    {expiresAt && (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+                        expires {expiresAt.toLocaleString()}
+                      </span>
+                    )}
+                  </span>
+                )
+                actions = (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <Btn variant="danger" onClick={() => handleFleetAction(f.id, 'confirm-attack')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
+                      {pending === 'confirm-attack' ? '…' : 'Confirm Attack'}
+                    </Btn>
+                    <Btn variant="ghost" onClick={() => handleFleetAction(f.id, 'recall')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
+                      {pending === 'recall' ? '…' : 'Recall'}
+                    </Btn>
+                  </div>
+                )
+              } else if (f.status === 'engaged') {
+                const hasDefenders = f.destination_has_defenders
+                statusEl = hasDefenders
+                  ? <Badge color="rose">In combat</Badge>
+                  : <Badge color="teal">Undefended — draining resources</Badge>
+                actions = (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {!hasDefenders && (
+                      <Btn variant="amber" onClick={() => handleFleetAction(f.id, 'conquer')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
+                        {pending === 'conquer' ? '…' : 'Conquer'}
+                      </Btn>
+                    )}
+                    <Btn variant="ghost" onClick={() => handleFleetAction(f.id, 'recall')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
+                      {pending === 'recall' ? '…' : 'Recall'}
+                    </Btn>
+                  </div>
+                )
+              } else {
+                // holding
+                statusEl = <Badge color="muted">Holding</Badge>
+                actions = (
+                  <Btn variant="ghost" onClick={() => handleFleetAction(f.id, 'recall')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
+                    {pending === 'recall' ? '…' : 'Recall'}
+                  </Btn>
+                )
+              }
+
+              return (
+                <Tr key={f.id}>
+                  <Td accent="amber">{f.unit_count} fighters</Td>
+                  <Td>{loc}</Td>
+                  <Td>{statusEl}</Td>
+                  <Td>
+                    {actions}
+                    {err && <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 4 }}>{err}</p>}
+                  </Td>
+                </Tr>
+              )
+            })}
+          </Table>
+        )}
       </Card>
 
       <SectionLabel>Active Wars</SectionLabel>

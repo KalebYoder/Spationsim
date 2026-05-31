@@ -35,7 +35,17 @@ function RenameInput({ current, onSave, onCancel }) {
   )
 }
 
-function TerritoryCard({ territory, flagColor, onRenamed }) {
+function YieldTag({ value, color, suffix }) {
+  if (!value && value !== 0) return null
+  const sign = value > 0 ? '+' : ''
+  return (
+    <span style={{ fontSize: 12, color, fontVariantNumeric: 'tabular-nums' }}>
+      {sign}{value}{suffix}
+    </span>
+  )
+}
+
+function TerritoryCard({ territory, flagColor, onRenamed, yieldData }) {
   const [open, setOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -126,6 +136,17 @@ function TerritoryCard({ territory, flagColor, onRenamed }) {
           <span>Distance {territory.distance_from_center}</span>
           <span>Min {parseFloat(territory.mineral_richness).toFixed(2)}</span>
           <span>Fuel {parseFloat(territory.fuel_richness).toFixed(2)}</span>
+          {yieldData && (
+            <span style={{ display: 'flex', gap: 10, paddingLeft: 4, borderLeft: '1px solid var(--border)' }}>
+              <YieldTag value={yieldData.minerals_per_tick} color="var(--amber)" suffix=" min/t" />
+              <YieldTag value={yieldData.fuel_per_tick} color="var(--teal)" suffix=" fuel/t" />
+              <YieldTag
+                value={yieldData.currency_net_per_tick}
+                color={yieldData.currency_net_per_tick >= 0 ? 'var(--teal)' : 'var(--danger)'}
+                suffix="¤/t"
+              />
+            </span>
+          )}
           <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{open ? '▲' : '▼'}</span>
         </div>
       </div>
@@ -161,14 +182,27 @@ function TerritoryCard({ territory, flagColor, onRenamed }) {
 export default function Planets() {
   const { nation, loading: nationLoading } = useNation()
   const [territories, setTerritories] = useState([])
+  const [yieldsById, setYieldsById] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (!nation) return
-    fetch('/api/nations/mine/territories', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(data => { setTerritories(data); setLoading(false) })
+    Promise.all([
+      fetch('/api/nations/mine/territories', { credentials: 'include' }),
+      fetch('/api/nations/mine/territories/yields', { credentials: 'include' }),
+    ])
+      .then(([tRes, yRes]) => Promise.all([
+        tRes.ok ? tRes.json() : Promise.reject(),
+        yRes.ok ? yRes.json() : [],
+      ]))
+      .then(([tData, yData]) => {
+        setTerritories(tData)
+        const byId = {}
+        for (const y of yData) byId[y.territory_id] = y
+        setYieldsById(byId)
+        setLoading(false)
+      })
       .catch(() => { setError('Failed to load territories'); setLoading(false) })
   }, [nation?.id])
 
@@ -213,6 +247,7 @@ export default function Planets() {
                 territory={t}
                 flagColor={nation?.flag_color}
                 onRenamed={handleRenamed}
+                yieldData={yieldsById[t.id] ?? null}
               />
             ))}
         </div>

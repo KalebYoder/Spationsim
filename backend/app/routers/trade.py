@@ -10,8 +10,11 @@ from ..models.territory import Territory
 from ..models.player import Player
 from ..models.trade import Trade
 from ..models.event import Event
+from ..models.probe_data import ProbeData, ProbeDataAccess
+from ..models.probe_visibility import ProbeVisibility
 from ..routers.auth import get_current_player
-from ..routers.diplomacy import is_at_war
+from ..routers.diplomacy import is_at_war, _get_or_create_diplomacy
+from ..services.pathfinding import compute_reachable_ids
 
 router = APIRouter(prefix="/api/trade", tags=["trade"])
 
@@ -26,6 +29,10 @@ class ProposeTradeRequest(BaseModel):
     request_minerals: float = 0
     request_fuel: float = 0
     request_currency: float = 0
+    includes_peace: bool = False
+    offer_territory_id: int | None = None
+    request_territory_id: int | None = None
+    offer_probe_data_ids: list[int] = []
 
 
 class EditTradeRequest(BaseModel):
@@ -35,11 +42,47 @@ class EditTradeRequest(BaseModel):
     request_minerals: float = 0
     request_fuel: float = 0
     request_currency: float = 0
+    includes_peace: bool = False
+    offer_territory_id: int | None = None
+    request_territory_id: int | None = None
+    offer_probe_data_ids: list[int] = []
 
 
-def _trade_response(trade: Trade) -> dict:
+def _trade_response(trade: Trade, db: Session, viewer_nation_id: int | None = None) -> dict:
     def _iso(dt):
         return dt.isoformat() if dt else None
+
+    offer_terr = trade.offer_territory
+    request_terr = trade.request_territory
+
+    # Build probe data entries — coordinates are never exposed in trade responses.
+    # Reachability is computed from the viewer's territory network when viewer is known.
+    probe_ids: list[int] = trade.offer_probe_data_ids or []
+    reachable_territory_ids: set[int] = set()
+    if probe_ids and viewer_nation_id:
+        all_territories = db.query(Territory).all()
+        td = [
+            {"id": t.id, "node_key": t.node_key, "territory_type": t.territory_type, "nation_id": t.nation_id}
+            for t in all_territories
+        ]
+        for owned in (t for t in td if t["nation_id"] == viewer_nation_id):
+            reachable_territory_ids |= compute_reachable_ids(owned["node_key"], viewer_nation_id, td)
+
+    offer_probe_data = []
+    for pd_id in probe_ids:
+        pd = db.get(ProbeData, pd_id)
+        if pd is None:
+            continue  # deleted when territory was colonised
+        t = db.get(Territory, pd.territory_id)
+        entry: dict = {
+            "probe_data_id": pd.id,
+            "mineral_richness": float(pd.mineral_richness),
+            "fuel_richness": float(pd.fuel_richness),
+            "territory_type": t.territory_type if t else "normal",
+        }
+        if viewer_nation_id:
+            entry["is_reachable"] = pd.territory_id in reachable_territory_ids
+        offer_probe_data.append(entry)
 
     return {
         "id": trade.id,
@@ -60,6 +103,12 @@ def _trade_response(trade: Trade) -> dict:
         "from_confirmed_at": _iso(trade.from_confirmed_at),
         "to_accepted_at": _iso(trade.to_accepted_at),
         "to_confirmed_at": _iso(trade.to_confirmed_at),
+        "includes_peace": trade.includes_peace,
+        "offer_territory_id": trade.offer_territory_id,
+        "offer_territory_name": (offer_terr.name or offer_terr.node_key) if offer_terr else None,
+        "request_territory_id": trade.request_territory_id,
+        "request_territory_name": (request_terr.name or request_terr.node_key) if request_terr else None,
+        "offer_probe_data": offer_probe_data,
     }
 
 
@@ -161,6 +210,47 @@ def _execute_trade(trade: Trade, proposer: Nation, recipient: Nation, now: datet
     recipient.fuel     = float(recipient.fuel)     - float(trade.request_fuel)     + float(trade.offer_fuel)
     recipient.currency = float(recipient.currency) - float(trade.request_currency) + float(trade.offer_currency)
 
+    if trade.offer_territory_id:
+        terr = db.get(Territory, trade.offer_territory_id)
+        if not terr or terr.nation_id != trade.from_nation_id:
+            raise HTTPException(status_code=409, detail="Offered territory is no longer under proposer's control")
+        terr.nation_id = trade.to_nation_id
+
+    if trade.request_territory_id:
+        terr = db.get(Territory, trade.request_territory_id)
+        if not terr or terr.nation_id != trade.to_nation_id:
+            raise HTTPException(status_code=409, detail="Requested territory is no longer under recipient's control")
+        terr.nation_id = trade.from_nation_id
+
+    if trade.includes_peace:
+        diplo = _get_or_create_diplomacy(db, trade.from_nation_id, trade.to_nation_id)
+        diplo.status = "neutral"
+        diplo.updated_at = now
+
+    # Grant probe data access and map visibility to recipient
+    for pd_id in (trade.offer_probe_data_ids or []):
+        pd = db.get(ProbeData, pd_id)
+        if pd is None:
+            continue
+        already = db.query(ProbeDataAccess).filter(
+            ProbeDataAccess.probe_data_id == pd_id,
+            ProbeDataAccess.granted_to == trade.to_nation_id,
+        ).first()
+        if not already:
+            db.add(ProbeDataAccess(
+                probe_data_id=pd_id,
+                granted_to=trade.to_nation_id,
+            ))
+        vis_exists = db.query(ProbeVisibility).filter(
+            ProbeVisibility.nation_id == trade.to_nation_id,
+            ProbeVisibility.territory_id == pd.territory_id,
+        ).first()
+        if not vis_exists:
+            db.add(ProbeVisibility(
+                nation_id=trade.to_nation_id,
+                territory_id=pd.territory_id,
+            ))
+
     trade.status = "accepted"
     trade.resolved_at = now
 
@@ -170,6 +260,9 @@ def _execute_trade(trade: Trade, proposer: Nation, recipient: Nation, now: datet
             "trade_id": trade.id,
             "from_nation_id": trade.from_nation_id,
             "to_nation_id": trade.to_nation_id,
+            "includes_peace": trade.includes_peace,
+            "offer_territory_id": trade.offer_territory_id,
+            "request_territory_id": trade.request_territory_id,
         },
         scheduled_for=now,
         processed_at=now,
@@ -191,7 +284,7 @@ def list_trades(
         (Trade.from_nation_id == nation.id) | (Trade.to_nation_id == nation.id),
     ).all()
 
-    return [_trade_response(t) for t in trades]
+    return [_trade_response(t, db, viewer_nation_id=nation.id) for t in trades]
 
 
 @router.get("/route/{nation_id}")
@@ -229,8 +322,13 @@ def propose_trade(
     if not target:
         raise HTTPException(status_code=404, detail="Target nation not found")
 
-    if is_at_war(db, nation.id, body.to_nation_id):
-        raise HTTPException(status_code=409, detail="Cannot trade with a nation you are at war with")
+    if is_at_war(db, nation.id, body.to_nation_id) and not body.includes_peace:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot trade with a nation you are at war with. Include peace terms to negotiate.",
+        )
+    if body.includes_peace and not is_at_war(db, nation.id, body.to_nation_id):
+        raise HTTPException(status_code=409, detail="Not currently at war with this nation")
 
     amounts = [
         body.offer_minerals, body.offer_fuel, body.offer_currency,
@@ -241,8 +339,9 @@ def propose_trade(
 
     offer_amounts = [body.offer_minerals, body.offer_fuel, body.offer_currency]
     request_amounts = [body.request_minerals, body.request_fuel, body.request_currency]
-    if all(v == 0 for v in offer_amounts + request_amounts):
-        raise HTTPException(status_code=422, detail="At least one trade amount must be non-zero")
+    has_resources = not all(v == 0 for v in offer_amounts + request_amounts)
+    if not has_resources and not body.includes_peace and not body.offer_territory_id and not body.request_territory_id and not body.offer_probe_data_ids:
+        raise HTTPException(status_code=422, detail="At least one trade term must be specified")
 
     if float(nation.minerals) < body.offer_minerals:
         raise HTTPException(status_code=409, detail="Insufficient minerals to offer")
@@ -251,9 +350,29 @@ def propose_trade(
     if float(nation.currency) < body.offer_currency:
         raise HTTPException(status_code=409, detail="Insufficient currency to offer")
 
-    has_route, reason = _check_trade_route(db, nation.id, body.to_nation_id)
-    if not has_route:
-        raise HTTPException(status_code=409, detail=reason or "No trade route exists")
+    if body.offer_territory_id:
+        terr = db.get(Territory, body.offer_territory_id)
+        if not terr or terr.nation_id != nation.id:
+            raise HTTPException(status_code=403, detail="You do not control the offered territory")
+        if terr.territory_type == "void":
+            raise HTTPException(status_code=409, detail="Void territories cannot be traded")
+
+    if body.request_territory_id:
+        terr = db.get(Territory, body.request_territory_id)
+        if not terr or terr.nation_id != target.id:
+            raise HTTPException(status_code=409, detail="Target nation does not control the requested territory")
+        if terr.territory_type == "void":
+            raise HTTPException(status_code=409, detail="Void territories cannot be traded")
+
+    for pd_id in body.offer_probe_data_ids:
+        pd = db.get(ProbeData, pd_id)
+        if not pd or pd.discovered_by != nation.id:
+            raise HTTPException(status_code=403, detail=f"Probe data {pd_id} not found in your intelligence")
+
+    if not body.includes_peace:
+        has_route, reason = _check_trade_route(db, nation.id, body.to_nation_id)
+        if not has_route:
+            raise HTTPException(status_code=409, detail=reason or "No trade route exists")
 
     now = datetime.now(timezone.utc)
     trade = Trade(
@@ -266,7 +385,11 @@ def propose_trade(
         request_fuel=body.request_fuel,
         request_currency=body.request_currency,
         status="pending",
-        from_accepted_at=now,  # proposer starts their cooldown immediately
+        from_accepted_at=now,
+        includes_peace=body.includes_peace,
+        offer_territory_id=body.offer_territory_id,
+        request_territory_id=body.request_territory_id,
+        offer_probe_data_ids=body.offer_probe_data_ids,
     )
     db.add(trade)
     db.flush()
@@ -287,7 +410,7 @@ def propose_trade(
 
     db.commit()
     db.refresh(trade)
-    return _trade_response(trade)
+    return _trade_response(trade, db, viewer_nation_id=nation.id)
 
 
 @router.put("/{trade_id}")
@@ -318,15 +441,43 @@ def edit_trade(
     ]
     if any(v < 0 for v in amounts):
         raise HTTPException(status_code=422, detail="Trade amounts cannot be negative")
-    if all(v == 0 for v in amounts):
-        raise HTTPException(status_code=422, detail="At least one trade amount must be non-zero")
 
-    trade.offer_minerals   = body.offer_minerals
-    trade.offer_fuel       = body.offer_fuel
-    trade.offer_currency   = body.offer_currency
-    trade.request_minerals = body.request_minerals
-    trade.request_fuel     = body.request_fuel
-    trade.request_currency = body.request_currency
+    has_resources = not all(v == 0 for v in amounts)
+    if not has_resources and not body.includes_peace and not body.offer_territory_id and not body.request_territory_id and not body.offer_probe_data_ids:
+        raise HTTPException(status_code=422, detail="At least one trade term must be specified")
+
+    from_id = trade.from_nation_id
+    to_id   = trade.to_nation_id
+
+    if body.offer_territory_id:
+        terr = db.get(Territory, body.offer_territory_id)
+        if not terr or terr.nation_id != from_id:
+            raise HTTPException(status_code=403, detail="You do not control the offered territory")
+        if terr.territory_type == "void":
+            raise HTTPException(status_code=409, detail="Void territories cannot be traded")
+
+    if body.request_territory_id:
+        terr = db.get(Territory, body.request_territory_id)
+        if not terr or terr.nation_id != to_id:
+            raise HTTPException(status_code=409, detail="Target nation does not control the requested territory")
+        if terr.territory_type == "void":
+            raise HTTPException(status_code=409, detail="Void territories cannot be traded")
+
+    for pd_id in body.offer_probe_data_ids:
+        pd = db.get(ProbeData, pd_id)
+        if not pd or pd.discovered_by != from_id:
+            raise HTTPException(status_code=403, detail=f"Probe data {pd_id} not found in proposer's intelligence")
+
+    trade.offer_minerals        = body.offer_minerals
+    trade.offer_fuel            = body.offer_fuel
+    trade.offer_currency        = body.offer_currency
+    trade.request_minerals      = body.request_minerals
+    trade.request_fuel          = body.request_fuel
+    trade.request_currency      = body.request_currency
+    trade.includes_peace        = body.includes_peace
+    trade.offer_territory_id    = body.offer_territory_id
+    trade.request_territory_id  = body.request_territory_id
+    trade.offer_probe_data_ids  = body.offer_probe_data_ids
 
     # Reset all confirmation state for both parties
     trade.from_accepted_at  = None
@@ -336,7 +487,7 @@ def edit_trade(
 
     db.commit()
     db.refresh(trade)
-    return _trade_response(trade)
+    return _trade_response(trade, db, viewer_nation_id=nation.id)
 
 
 @router.post("/{trade_id}/accept")
@@ -376,7 +527,7 @@ def accept_trade(
         confirmed_at = trade.to_confirmed_at
 
     if confirmed_at is not None:
-        return _trade_response(trade)  # already fully confirmed on this side, no-op
+        return _trade_response(trade, db, viewer_nation_id=nation.id)  # already fully confirmed on this side, no-op
 
     if accepted_at is None:
         # First click: start cooldown
@@ -405,7 +556,7 @@ def accept_trade(
 
     db.commit()
     db.refresh(trade)
-    return _trade_response(trade)
+    return _trade_response(trade, db, viewer_nation_id=nation.id)
 
 
 @router.post("/{trade_id}/reject")
@@ -446,7 +597,7 @@ def reject_trade(
 
     db.commit()
     db.refresh(trade)
-    return _trade_response(trade)
+    return _trade_response(trade, db, viewer_nation_id=nation.id)
 
 
 @router.post("/{trade_id}/cancel")
@@ -487,4 +638,4 @@ def cancel_trade(
 
     db.commit()
     db.refresh(trade)
-    return _trade_response(trade)
+    return _trade_response(trade, db, viewer_nation_id=nation.id)

@@ -1,8 +1,8 @@
 UNIT_STATS = {
     "starfighter": {
         "attack": 2,
-        "defense": 1,
-        "hp": 5,
+        "shields": 1,
+        "structural_integrity": 5,
         "nodes_per_tick": 2,
         "manufacture_cost_minerals": 15,
         "manufacture_cost_fuel": 30,
@@ -62,3 +62,8 @@ FACILITY_BUILD_TICKS = {
 }
 DEMOLISH_TICKS = 1
 DEMOLISH_REFUND_FRACTION = 0.25  # 25% of build cost returned, floored to int
+
+# Logistics fuel upkeep: each Nth territory costs N × k fuel/tick.
+# Total across N territories = k × N(N+1)/2  (quadratic, creates diminishing returns).
+# At k=1: 5 territories=15 fuel/tick, 10=55, 20=210.  Tune during beta.
+LOGISTICS_FUEL_K = 1

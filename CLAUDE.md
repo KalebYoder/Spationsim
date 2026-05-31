@@ -264,6 +264,27 @@ Do not build ahead of the current phase without instruction. Complete and test e
 
 ---
 
+## Development Workflow
+
+**Test-driven development is required for all new backend logic.**
+
+For every new backend feature or service function:
+1. Spawn the `qa-analyst` agent first to write the test suite before any implementation exists.
+2. Implement against those tests.
+3. Run the test file with `docker compose exec backend pytest tests/<test_file>.py -v` and confirm all pass before marking the task done.
+4. After a feature is complete, run only its own test file — not the full suite. Full suite runs are periodic debug passes only.
+
+Extract testable logic into pure service functions (in `backend/app/services/`) so the qa-analyst can test them without a running database. Follow the existing pattern: `pathfinding.py`, `combat.py`, `territory_yield.py`.
+
+**Specialist agents to use proactively:**
+- `qa-analyst` — write test suites before implementation (TDD first step)
+- `game-expert` — design decisions, balance questions, genre research
+- `dba` — any schema change, new index, or complex query
+- `developer` — large multi-file feature implementation
+- `Explore` — codebase search spanning more than 3 files
+
+---
+
 ## Project Constraints
 
 - Solo developer (infrastructure engineer background, not software product experience)

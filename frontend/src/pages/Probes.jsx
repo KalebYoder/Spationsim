@@ -297,6 +297,8 @@ export default function Probes() {
   const [loading, setLoading] = useState(true)
   const [showManufacture, setShowManufacture] = useState(false)
   const [showLaunch, setShowLaunch] = useState(false)
+  const [recallingId, setRecallingId] = useState(null)
+  const [recallErrors, setRecallErrors] = useState({})
 
   const load = useCallback(async () => {
     try {
@@ -331,6 +333,27 @@ export default function Probes() {
   const handleLaunched = () => {
     setShowLaunch(false)
     load()
+  }
+
+  const handleRecall = async (probeId) => {
+    setRecallingId(probeId)
+    setRecallErrors(prev => ({ ...prev, [probeId]: null }))
+    try {
+      const r = await fetch(`/api/probes/${probeId}/recall`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await r.json()
+      if (!r.ok) {
+        setRecallErrors(prev => ({ ...prev, [probeId]: data.detail || 'Failed to recall' }))
+      } else {
+        load()
+      }
+    } catch {
+      setRecallErrors(prev => ({ ...prev, [probeId]: 'Network error' }))
+    } finally {
+      setRecallingId(null)
+    }
   }
 
   if (loading) return <p style={{ color: 'var(--text-muted)' }}>Loading&hellip;</p>
@@ -380,15 +403,15 @@ export default function Probes() {
       <SectionLabel>Active Probes</SectionLabel>
       <Card style={{ padding: 0 }}>
         {activeProbes.length === 0 ? (
-          <Table headers={['Probe #', 'From', 'Current', 'Destination', 'ETA', 'Status']}>
+          <Table headers={['Probe #', 'From', 'Current', 'Destination', 'ETA', 'Status', '']}>
             <Tr>
-              <Td colSpan={6} style={{ textAlign: 'center', padding: '40px 0' }}>
+              <Td colSpan={7} style={{ textAlign: 'center', padding: '40px 0' }}>
                 <EmptyState title="No active probes" body="Launch probes from colonized territories to scout uncharted systems." />
               </Td>
             </Tr>
           </Table>
         ) : (
-          <Table headers={['Probe #', 'From', 'Current', 'Destination', 'ETA', 'Status']}>
+          <Table headers={['Probe #', 'From', 'Current', 'Destination', 'ETA', 'Status', '']}>
             {activeProbes.map(p => (
               <Tr key={p.id}>
                 <Td muted>#{p.id}</Td>
@@ -398,6 +421,25 @@ export default function Probes() {
                 <Td muted>{p.status === 'in_transit' ? fmtEta(p.arrives_at) : '—'}</Td>
                 <Td accent={p.status === 'stationed' ? 'teal' : undefined} muted={p.status !== 'stationed'}>
                   {p.status === 'in_transit' ? 'In Transit' : 'Stationed'}
+                </Td>
+                <Td>
+                  {p.status === 'in_transit' && (
+                    <div>
+                      <Btn
+                        variant="ghost"
+                        onClick={() => handleRecall(p.id)}
+                        disabled={recallingId === p.id}
+                        style={{ padding: '3px 10px', fontSize: 12 }}
+                      >
+                        {recallingId === p.id ? '…' : 'Recall'}
+                      </Btn>
+                      {recallErrors[p.id] && (
+                        <p style={{ color: 'var(--danger)', fontSize: 11, marginTop: 4 }}>
+                          {recallErrors[p.id]}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </Td>
               </Tr>
             ))}

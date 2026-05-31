@@ -32,23 +32,47 @@ function ResourceLine({ minerals, fuel, currency, label }) {
 
 function ProposeForm({ nations, myNation, onProposed }) {
   const [searchParams] = useSearchParams()
-  const [toId, setToId]           = useState(searchParams.get('with') || '')
-  const [route, setRoute]         = useState(null)
-  const [routeLoading, setRL]     = useState(false)
-  const [offerMin,  setOfferMin]  = useState(0)
-  const [offerFuel, setOfferFuel] = useState(0)
-  const [offerCur,  setOfferCur]  = useState(0)
-  const [reqMin,    setReqMin]    = useState(0)
-  const [reqFuel,   setReqFuel]   = useState(0)
-  const [reqCur,    setReqCur]    = useState(0)
-  const [submitting, setSub]      = useState(false)
-  const [error, setError]         = useState('')
+  const [toId, setToId]                     = useState(searchParams.get('with') || '')
+  const [route, setRoute]                   = useState(null)
+  const [routeLoading, setRL]               = useState(false)
+  const [offerMin,  setOfferMin]            = useState(0)
+  const [offerFuel, setOfferFuel]           = useState(0)
+  const [offerCur,  setOfferCur]            = useState(0)
+  const [reqMin,    setReqMin]              = useState(0)
+  const [reqFuel,   setReqFuel]             = useState(0)
+  const [reqCur,    setReqCur]              = useState(0)
+  const [includesPeace, setIncludesPeace]           = useState(false)
+  const [offerTerritoryId, setOfferTerritoryId]     = useState('')
+  const [requestTerritoryId, setRequestTerritoryId] = useState('')
+  const [myTerritories, setMyTerritories]           = useState([])
+  const [theirTerritories, setTheirTerritories]     = useState([])
+  const [warStatus, setWarStatus]                   = useState(false)
+  const [myProbeData, setMyProbeData]               = useState([])
+  const [offerProbeDataIds, setOfferProbeDataIds]   = useState([])
+  const [submitting, setSub]                        = useState(false)
+  const [error, setError]                           = useState('')
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/nations/mine/territories', { credentials: 'include' }).then(r => r.ok ? r.json() : []),
+      fetch('/api/probes/data', { credentials: 'include' }).then(r => r.ok ? r.json() : []),
+    ]).then(([terr, probes]) => { setMyTerritories(terr); setMyProbeData(probes) })
+  }, [])
 
   const checkRoute = useCallback(async (nationId) => {
-    if (!nationId) { setRoute(null); return }
+    if (!nationId) { setRoute(null); setTheirTerritories([]); setWarStatus(false); return }
     setRL(true)
-    const r = await fetch(`/api/trade/route/${nationId}`, { credentials: 'include' })
-    if (r.ok) setRoute(await r.json())
+    const [rRes, tRes, dRes] = await Promise.all([
+      fetch(`/api/trade/route/${nationId}`, { credentials: 'include' }),
+      fetch(`/api/nations/${nationId}/territories`, { credentials: 'include' }),
+      fetch(`/api/diplomacy/${nationId}`, { credentials: 'include' }),
+    ])
+    if (rRes.ok) setRoute(await rRes.json())
+    if (tRes.ok) setTheirTerritories(await tRes.json())
+    if (dRes.ok) {
+      const d = await dRes.json()
+      setWarStatus(d.status === 'war' || d.status === 'war_pending')
+    }
     setRL(false)
   }, [])
 
@@ -70,6 +94,10 @@ function ProposeForm({ nations, myNation, onProposed }) {
           request_minerals: reqMin,
           request_fuel: reqFuel,
           request_currency: reqCur,
+          includes_peace: includesPeace,
+          offer_territory_id: offerTerritoryId ? Number(offerTerritoryId) : null,
+          request_territory_id: requestTerritoryId ? Number(requestTerritoryId) : null,
+          offer_probe_data_ids: offerProbeDataIds,
         }),
       })
       const data = await r.json()
@@ -77,6 +105,8 @@ function ProposeForm({ nations, myNation, onProposed }) {
       onProposed()
       setOfferMin(0); setOfferFuel(0); setOfferCur(0)
       setReqMin(0);   setReqFuel(0);   setReqCur(0)
+      setIncludesPeace(false); setOfferTerritoryId(''); setRequestTerritoryId('')
+      setOfferProbeDataIds([])
     } catch {
       setError('Network error')
     } finally {
@@ -86,14 +116,19 @@ function ProposeForm({ nations, myNation, onProposed }) {
 
   const routeStatus = () => {
     if (!toId) return null
+    if (warStatus && includesPeace) return <span style={{ color: 'var(--teal)', fontSize: 12 }}>Peace negotiation — no trade route required</span>
     if (routeLoading) return <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Checking route…</span>
     if (!route) return null
     if (route.has_route) return <span style={{ color: 'var(--teal)', fontSize: 12 }}>Route available</span>
     return <span style={{ color: 'var(--danger)', fontSize: 12 }}>No route — {route.reason}</span>
   }
 
-  const canSubmit = !submitting && toId && route?.has_route &&
-    (offerMin || offerFuel || offerCur || reqMin || reqFuel || reqCur)
+  const toggleProbeData = id => setOfferProbeDataIds(prev =>
+    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+  )
+
+  const hasTerms = offerMin || offerFuel || offerCur || reqMin || reqFuel || reqCur || includesPeace || offerTerritoryId || requestTerritoryId || offerProbeDataIds.length > 0
+  const canSubmit = !submitting && toId && (includesPeace || route?.has_route) && hasTerms
 
   return (
     <Card style={{ marginBottom: 24 }}>
@@ -160,6 +195,68 @@ function ProposeForm({ nations, myNation, onProposed }) {
           ))}
         </div>
       </div>
+
+      {warStatus && (
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            id="peace-checkbox"
+            checked={includesPeace}
+            onChange={e => setIncludesPeace(e.target.checked)}
+          />
+          <label htmlFor="peace-checkbox" style={{ fontSize: 13, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            Include peace terms (ends the war on acceptance)
+          </label>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginTop: 12 }}>
+        <div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Offer territory (optional)
+          </div>
+          <select value={offerTerritoryId} onChange={e => setOfferTerritoryId(e.target.value)} style={{ ...INPUT, width: '100%', textAlign: 'left' }}>
+            <option value="">— None —</option>
+            {myTerritories.filter(t => t.is_colonized).map(t => (
+              <option key={t.id} value={t.id}>{t.name || t.node_key}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Request territory (optional)
+          </div>
+          <select value={requestTerritoryId} onChange={e => setRequestTerritoryId(e.target.value)} style={{ ...INPUT, width: '100%', textAlign: 'left' }}>
+            <option value="">— None —</option>
+            {theirTerritories.filter(t => t.is_colonized).map(t => (
+              <option key={t.id} value={t.id}>{t.name || t.node_key}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {myProbeData.filter(pd => !pd.is_colonized).length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Offer probe data (optional)
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '8px 10px' }}>
+            {myProbeData.filter(pd => !pd.is_colonized).map(pd => (
+              <label key={pd.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={offerProbeDataIds.includes(pd.id)}
+                  onChange={() => toggleProbeData(pd.id)}
+                />
+                <span style={{ color: 'var(--amber)' }}>{Number(pd.mineral_richness).toFixed(1)}M</span>
+                <span style={{ color: 'var(--teal)' }}>{Number(pd.fuel_richness).toFixed(1)}F</span>
+                <span style={{ color: 'var(--text-muted)', fontFamily: 'monospace', fontSize: 11 }}>{pd.node_key}</span>
+                {pd.territory_name && <span style={{ color: 'var(--text-secondary)' }}>{pd.territory_name}</span>}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ marginTop: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
         <Btn variant="amber" onClick={handleSubmit} disabled={!canSubmit}>
@@ -248,8 +345,23 @@ function EditTradeForm({ trade, onEdited, onCancel }) {
   const [reqMin,    setReqMin]    = useState(parseFloat(trade.request_minerals))
   const [reqFuel,   setReqFuel]   = useState(parseFloat(trade.request_fuel))
   const [reqCur,    setReqCur]    = useState(parseFloat(trade.request_currency))
+  const [includesPeace, setIncludesPeace]           = useState(trade.includes_peace ?? false)
+  const [offerTerritoryId, setOfferTerritoryId]     = useState(trade.offer_territory_id ?? '')
+  const [requestTerritoryId, setRequestTerritoryId] = useState(trade.request_territory_id ?? '')
+  const [fromTerritories, setFromTerritories]       = useState([])
+  const [toTerritories, setToTerritories]           = useState([])
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`/api/nations/${trade.from_nation_id}/territories`, { credentials: 'include' }),
+      fetch(`/api/nations/${trade.to_nation_id}/territories`, { credentials: 'include' }),
+    ]).then(async ([fRes, tRes]) => {
+      if (fRes.ok) setFromTerritories(await fRes.json())
+      if (tRes.ok) setToTerritories(await tRes.json())
+    })
+  }, [trade.from_nation_id, trade.to_nation_id])
 
   const handleSave = async () => {
     setSaving(true)
@@ -266,6 +378,9 @@ function EditTradeForm({ trade, onEdited, onCancel }) {
           request_minerals: reqMin,
           request_fuel: reqFuel,
           request_currency: reqCur,
+          includes_peace: includesPeace,
+          offer_territory_id: offerTerritoryId ? Number(offerTerritoryId) : null,
+          request_territory_id: requestTerritoryId ? Number(requestTerritoryId) : null,
         }),
       })
       const data = await r.json()
@@ -300,6 +415,40 @@ function EditTradeForm({ trade, onEdited, onCancel }) {
           ))}
         </div>
       </div>
+
+      <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input
+          type="checkbox"
+          id={`peace-edit-${trade.id}`}
+          checked={includesPeace}
+          onChange={e => setIncludesPeace(e.target.checked)}
+        />
+        <label htmlFor={`peace-edit-${trade.id}`} style={{ fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          Include peace terms
+        </label>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Offer territory</div>
+          <select value={offerTerritoryId} onChange={e => setOfferTerritoryId(e.target.value)} style={{ ...INPUT, width: '100%', textAlign: 'left' }}>
+            <option value="">— None —</option>
+            {fromTerritories.filter(t => t.is_colonized).map(t => (
+              <option key={t.id} value={t.id}>{t.name || t.node_key}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Request territory</div>
+          <select value={requestTerritoryId} onChange={e => setRequestTerritoryId(e.target.value)} style={{ ...INPUT, width: '100%', textAlign: 'left' }}>
+            <option value="">— None —</option>
+            {toTerritories.filter(t => t.is_colonized).map(t => (
+              <option key={t.id} value={t.id}>{t.name || t.node_key}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <Btn variant="amber" onClick={handleSave} disabled={saving}>Save</Btn>
         <button onClick={onCancel} style={{ background: 'none', color: 'var(--text-muted)', fontSize: 12, padding: '4px 8px' }}>
@@ -356,6 +505,42 @@ function TradeRow({ trade, myNationId, onAction }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <ResourceLine label="offers:" minerals={localTrade.offer_minerals} fuel={localTrade.offer_fuel} currency={localTrade.offer_currency} />
           <ResourceLine label="wants:"  minerals={localTrade.request_minerals} fuel={localTrade.request_fuel} currency={localTrade.request_currency} />
+          {localTrade.offer_probe_data?.length > 0 && (
+          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>probe data ({localTrade.offer_probe_data.length} planet{localTrade.offer_probe_data.length !== 1 ? 's' : ''}):</span>
+            {localTrade.offer_probe_data.map((pd, i) => (
+              <span key={i} style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ color: 'var(--amber)' }}>{Number(pd.mineral_richness).toFixed(1)}M</span>
+                <span style={{ color: 'var(--teal)' }}>{Number(pd.fuel_richness).toFixed(1)}F</span>
+                {pd.territory_type === 'anomaly' && <span style={{ color: 'var(--amber)', fontSize: 10 }}>anomaly</span>}
+                {'is_reachable' in pd && (
+                  <span style={{ fontSize: 10, color: pd.is_reachable ? 'var(--teal)' : 'var(--text-muted)' }}>
+                    {pd.is_reachable ? '✓ reachable' : '✗ blocked'}
+                  </span>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+        {(localTrade.includes_peace || localTrade.offer_territory_name || localTrade.request_territory_name) && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
+              {localTrade.includes_peace && (
+                <span style={{ fontSize: 12, color: 'var(--teal)', fontWeight: 600 }}>Peace</span>
+              )}
+              {localTrade.offer_territory_name && (
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <span style={{ color: 'var(--text-muted)', marginRight: 4 }}>offers territory:</span>
+                  {localTrade.offer_territory_name}
+                </span>
+              )}
+              {localTrade.request_territory_name && (
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  <span style={{ color: 'var(--text-muted)', marginRight: 4 }}>wants territory:</span>
+                  {localTrade.request_territory_name}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         {editing && (
           <EditTradeForm
