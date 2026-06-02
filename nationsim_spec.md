@@ -556,7 +556,7 @@ Prompt: "Open the Log page. Every tick generates entries: resource production, p
 
 **Step 7 — Understand the map and fleet dispatch** (triggers on: at least one fighter stationed)
 
-Prompt: "From the Map, you can dispatch your fleet to any reachable unclaimed planet. Fleets travel at 2 nodes per tick. Dispatching to an unclaimed planet claims it on arrival. Void tiles are impassable walls — plan a valid path. Dispatching to an enemy planet enters a 4-hour confirmation window before combat can occur." Teach: map fog-of-war basics; fleet pathfinding rules; the confirmation window and standing orders (hold/recall); that claiming is separate from colonizing.
+Prompt: "From the Map, you can dispatch your fleet to any reachable node. Fleets travel at 2 nodes per tick. Dispatching to an unclaimed node claims it on arrival. Void nodes cannot be colonized or developed, but can be claimed to control trade routes. Dispatching to an enemy planet enters a 4-hour confirmation window before combat can occur." Teach: map fog-of-war basics; fleet pathfinding rules; the difference between planets and void nodes; the confirmation window and standing orders (hold/recall); that claiming is separate from colonizing.
 
 **Step 8 — Build and send a colony ship** (triggers on: have at least 1 claimed territory with known richness, have 100+ unassigned pop, have a shipyard)
 
