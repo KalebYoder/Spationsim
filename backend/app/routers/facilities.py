@@ -17,6 +17,10 @@ from ..constants import (
     DEMOLISH_TICKS,
     DEMOLISH_REFUND_FRACTION,
 )
+from ..models.tutorial import TutorialState
+from ..services.tutorial import should_complete_step, get_tutorial_reward, next_step as tutorial_next_step
+
+_IMMEDIATE_TUTORIAL_STEPS = {1, 2}
 
 router = APIRouter(prefix="/api/facilities", tags=["facilities"])
 
@@ -85,6 +89,19 @@ def build_facility(
     if territory.territory_type == "void":
         raise HTTPException(status_code=409, detail="Cannot build facilities in void space")
 
+    if body.type == "propaganda_office":
+        existing = (
+            db.query(Infrastructure)
+            .filter(
+                Infrastructure.territory_id == territory.id,
+                Infrastructure.type == "propaganda_office",
+                Infrastructure.status.in_(["active", "under_construction"]),
+            )
+            .first()
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="Only one Propaganda Office can be built per territory")
+
     cost = FACILITY_COSTS[body.type]
     currency_cost = cost.get("currency", 0)
     if (
@@ -126,6 +143,22 @@ def build_facility(
         completes_at=completes_at,
     )
     db.add(infra)
+
+    # Award tutorial reward immediately for steps 1 and 2
+    tutorial = db.query(TutorialState).filter(
+        TutorialState.nation_id == nation.id,
+        TutorialState.dismissed == False,
+    ).first()
+    if tutorial and should_complete_step(tutorial.current_step, body.type) \
+            and tutorial.current_step in _IMMEDIATE_TUTORIAL_STEPS:
+        reward = get_tutorial_reward(tutorial.current_step)
+        nation.minerals += reward["minerals"]
+        nation.fuel += reward["fuel"]
+        nation.currency += reward["currency"]
+        completed_step = tutorial.current_step
+        setattr(tutorial, f"step{completed_step}_completed_at", datetime.now(timezone.utc))
+        tutorial.current_step = tutorial_next_step(tutorial.current_step)
+
     db.commit()
     db.refresh(infra)
     return _to_response(infra, territory)
