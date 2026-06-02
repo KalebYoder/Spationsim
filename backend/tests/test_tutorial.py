@@ -98,17 +98,16 @@ class TestGetTutorialReward:
     def test_step_2_currency_reward(self):
         assert get_tutorial_reward(2)["currency"] == 500
 
-    # --- Step 3: UI step, no reward ---
+    # --- Step 3: Planets page visit ---
 
-    def test_step_3_minerals_reward_is_zero(self):
-        assert get_tutorial_reward(3)["minerals"] == 0
+    def test_step_3_minerals_reward(self):
+        assert get_tutorial_reward(3)["minerals"] == 100
 
-    def test_step_3_fuel_reward_is_zero(self):
-        assert get_tutorial_reward(3)["fuel"] == 0
+    def test_step_3_fuel_reward(self):
+        assert get_tutorial_reward(3)["fuel"] == 100
 
-    def test_step_3_currency_reward_is_zero(self):
-        # Step 3 is a UI-only step; granting any currency would be a bug.
-        assert get_tutorial_reward(3)["currency"] == 0
+    def test_step_3_currency_reward(self):
+        assert get_tutorial_reward(3)["currency"] == 500
 
     # --- Step 4: shipyard completed ---
 

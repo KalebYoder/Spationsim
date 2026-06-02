@@ -9,7 +9,7 @@ _FACILITY_TRIGGERED_STEPS = {1, 2, 4}
 _REWARDS = {
     1: {"minerals": 500, "fuel": 0, "currency": 500},
     2: {"minerals": 0, "fuel": 500, "currency": 500},
-    3: {"minerals": 0, "fuel": 0, "currency": 0},
+    3: {"minerals": 100, "fuel": 100, "currency": 500},
     4: {"minerals": 0, "fuel": 0, "currency": 1000},
 }
 

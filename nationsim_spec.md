@@ -538,7 +538,7 @@ Reward: +500 fuel, +500 currency — awarded immediately when the build is queue
 
 Prompt: "Visit the Planets tab to see your resource gain and loss rates." The production section on the Planets page is highlighted with an amber outline while this step is active. Completing this step requires no player action beyond navigating to /planets — it auto-completes on visit. Teach: currency income per tick, territory upkeep, the development-depth-over-sprawl principle.
 
-Reward: none. This is a UI orientation step only.
+Reward: +100 minerals, +100 fuel, +500 currency — awarded immediately when the player visits the Planets page.
 
 **Step 4 — Build a shipyard** (triggers on: at least one mine and one refinery active, sufficient resources) **[implemented]**
 
