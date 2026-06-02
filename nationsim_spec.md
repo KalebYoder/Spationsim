@@ -554,7 +554,7 @@ Prompt: "Your shipyard is ready. Manufacture a fighter — your first military u
 
 Prompt: "Open the Log page. Every tick generates entries: resource production, population changes, fleet status, and construction completions. This is your primary tool for understanding what happened while you were offline." Teach: the game is asynchronous; players should check the log after returning; teach what each entry type means.
 
-**Step 7 — Understand the map and fleet dispatch** (triggers on: at least one fighter stationed)
+**Step 7 — Understand the map and fleet dispatch** (triggers on: at least one fighter stationed; completes on: fleet dispatched to any node other than current location)
 
 Prompt: "From the Map, you can dispatch your fleet to any reachable node. Fleets travel at 2 nodes per tick. Dispatching to an unclaimed node claims it on arrival. Void nodes cannot be colonized or developed, but can be claimed to control trade routes. Dispatching to an enemy planet enters a 4-hour confirmation window before combat can occur." Teach: map fog-of-war basics; fleet pathfinding rules; the difference between planets and void nodes; the confirmation window and standing orders (hold/recall); that claiming is separate from colonizing.
 
@@ -562,7 +562,7 @@ Prompt: "From the Map, you can dispatch your fleet to any reachable node. Fleets
 
 Prompt: "Claimed territory is owned but empty — no facilities can be built until population arrives. A colony ship loads up to 100 population from any colonized planet you own and carries it to a claimed planet. Build one at your shipyard. Colony ships travel 1 node per tick — slower than fighters." Teach: the two-step claim/colonize distinction; colony ship load/unload mechanics; slower speed than fighters; requires 100 unassigned pop at the source planet.
 
-**Step 9 — Scout with a probe** (triggers on: shipyard becomes active)
+**Step 9 — Scout with a probe** (triggers on: colony ship manufactured)
 
 Prompt: "Probes are expensive instruments for discovering new space. Your probe range is 10 nodes from your nearest colony. Dispatching a probe reveals destination richness — but only at the destination, not along the path. Probe data can be sold to other players. Build a probe at your shipyard when resources allow." Teach: probe cost; range limitation; data is destination-only; the information economy exists; probes can be recalled; probe data is non-exclusive on sale.
 
@@ -602,7 +602,7 @@ Prompt: "You have a functioning multi-planet empire. The rest of the game is you
 | Read event log | Fighter manufactured | Day 2 or 3 |
 | Fleet dispatch / map | Fighter stationed | Day 2 or 3 |
 | Colony ship | Claimed territory + 100 pop available | Day 3–5 |
-| Send probe | Shipyard active | Day 2 or 3 |
+| Send probe | Colony ship manufactured | Day 3–5 |
 | Tutorial complete | Second territory colonized | Day 3–5 |
 
 The ~40-hour currency wait for the shipyard is the main patience test. For the beta audience of veteran nation-sim players, this is in line with OGame's early mine→metal storage→shipyard cadence. It may need shortening for a general audience. Consider raising starting currency to 5000¤ to shorten this to ~20h if beta feedback identifies it as a dropout point.
@@ -615,7 +615,8 @@ The ~40-hour currency wait for the shipyard is the main patience test. For the b
 - **Skip/dismiss:** ~~Can veteran players dismiss the tutorial?~~ **Resolved: yes.** A "Skip tutorial" button is present in the sidebar panel and sets `dismissed = true` immediately. No re-enable option in the current implementation; can be added if beta feedback requests it.
 - **Starting currency:** Current 2000¤ start produces a ~40h wait for the shipyard at +50¤/tick net income. This may be acceptable for veterans but will be a dropout point for general players. Consider raising to 4000–5000¤ before beta launch. Monitor first-session completion rates.
 - **Home planet richness assignment:** The tutorial timing analysis assumes the home planet can have a pop cap above the starting 100 pop. If players pick a richness-1+1 planet (cap exactly 100), population never grows, and any growth-based tutorial gate fails. Either enforce a minimum home planet richness (e.g., mineral_richness + fuel_richness >= 4) at nation creation, or ensure no tutorial step uses population growth as a gate. The revised flow above avoids growth-based gates entirely, but the minimum richness question should be decided regardless for game balance reasons.
-- **Probe tutorial timing:** Probes cost 10000¤ and 1000 min + 500 fuel. A single-planet economy running mine + refinery generates ~50¤/tick net and 5 min + 5 fuel/tick. Reaching probe cost from tutorial-complete state takes approximately 200 ticks for currency alone. This is by design (probes are a later-game tool), but the tutorial should set this expectation explicitly rather than implying probes are a near-term goal. The step 8 prompt as written does this.
+- **Probe tutorial timing:** Probes cost 10000¤ and 1000 min + 500 fuel. A single-planet economy running mine + refinery generates ~50¤/tick net and 5 min + 5 fuel/tick. Reaching probe cost from tutorial-complete state takes approximately 200 ticks for currency alone. This is by design (probes are a later-game tool), but the tutorial should set this expectation explicitly rather than implying probes are a near-term goal. The step 9 prompt as written does this.
+- **Step 9 completion gate:** Should step 9 require the player to actually build and dispatch a probe to complete, or does the tutorial complete on colony ship manufacture (when the prompt appears)? Requiring a probe dispatch gives a stronger "done it once" confirmation but the cost (~200 ticks of savings) means most new players will not complete step 9 quickly. Consider whether an incomplete tutorial is worse than a tutorial that takes weeks to finish.
 
 Fix 1 — DEF as 1.5× garrison multiplier: don't implement as described
 The intent is right but the hook is wrong. Wiring the DEF stat now creates two overlapping sources of the same effect once stationary defenses arrive — you'd have to untangle them later. Instead, implement the home-territory advantage as a separate explicit multiplier on the defender's effective count (defender_effective = count × 1.5 if on own territory). This achieves the same balance result today, stays structurally separate from whatever DEF eventually does, and stationary defenses can be added independently without interference. Leave DEF=1 in the constants as a stub signaling that differentiation is coming.
