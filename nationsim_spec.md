@@ -520,23 +520,31 @@ The proposed trigger — "once planet reaches 90% population utilization, create
 
 ### Recommended Tutorial Flow
 
-The tutorial is a sequence of tooltip prompts tied to game state, not a forced linear path. Prompts appear when conditions are met; the player can skip or dismiss. Steps are numbered to show the expected ordering.
+The tutorial is a sidebar task list tied to game state — not a forced linear path and not an overlay. Prompts appear when conditions are met; the player can dismiss the tutorial entirely at any time. Steps are numbered to show the expected ordering. Steps marked **[implemented]** are live; the rest are planned for a future pass.
 
-**Step 1 — Build a mine** (triggers on: game start / nation creation)
+**Step 1 — Build a mine** (triggers on: nation creation) **[implemented]**
 
 Prompt: "Your home planet generates minerals passively each tick. Build a mine to extract them. Minerals are your primary construction resource." Show cost, pop requirement, build time. Teach: resource deduction is immediate; facility takes 1 tick to activate.
 
-**Step 2 — Build a refinery** (triggers on: mine under construction or active)
+Reward: +500 minerals, +500 currency — awarded immediately when the build is queued, not at tick completion.
+
+**Step 2 — Build a refinery** (triggers on: mine queued or active) **[implemented]**
 
 Prompt: "Refineries extract fuel — required for fleet movement, probes, and colony ships. Build one now while the mine completes." Teach: parallel construction is intentional; fuel is distinct from minerals; both are needed before any fleet can move far.
 
-**Step 3 — Understand currency income** (triggers on: first mine or refinery becomes active)
+Reward: +500 fuel, +500 currency — awarded immediately when the build is queued.
 
-Prompt: "Your active mine now generates currency income each tick (30¤/tick per active mine or refinery). Currency pays for shipyards, fighters, and probes. Your territory also costs currency each tick — more territories means more upkeep." Teach: the territory upkeep formula exists; development depth (more facilities per planet) is better than territory sprawl early on.
+**Step 3 — Review planet production** (triggers on: player visits the Planets page while on step 3) **[implemented]**
 
-**Step 4 — Build a shipyard** (triggers on: at least one mine and one refinery active, sufficient resources)
+Prompt: "Visit the Planets tab to see your resource gain and loss rates." The production section on the Planets page is highlighted with an amber outline while this step is active. Completing this step requires no player action beyond navigating to /planets — it auto-completes on visit. Teach: currency income per tick, territory upkeep, the development-depth-over-sprawl principle.
+
+Reward: none. This is a UI orientation step only.
+
+**Step 4 — Build a shipyard** (triggers on: at least one mine and one refinery active, sufficient resources) **[implemented]**
 
 Prompt: "The shipyard is required to build fighters, colony ships, and probes. It costs 2000¤ and takes 2 ticks to complete. Begin construction when you have the resources — income from your mine and refinery will get you there." Teach: the shipyard is the progression gate; 2-tick build time means planning ahead; the player should understand they are waiting for income, not doing something wrong.
+
+Reward: +1000 currency (half the shipyard cost) — awarded at tick time when the shipyard completes, not on queue.
 
 **Step 5 — Manufacture a fighter** (triggers on: shipyard becomes active)
 
@@ -558,27 +566,27 @@ Prompt: "Claimed territory is owned but empty — no facilities can be built unt
 
 Prompt: "Probes are expensive instruments for discovering new space. Your probe range is 10 nodes from your nearest colony. Dispatching a probe reveals destination richness — but only at the destination, not along the path. Probe data can be sold to other players. Build a probe at your shipyard when resources allow." Teach: probe cost; range limitation; data is destination-only; the information economy exists; probes can be recalled; probe data is non-exclusive on sale.
 
-Prompt: "Claimed territory is owned but empty — no facilities can be built until population arrives. A colony ship loads up to 100 population from any colonized planet you own and carries it to a claimed planet. Build one at your shipyard. Colony ships travel 1 node per tick — slower than fighters." Teach: the two-step claim/colonize distinction; colony ship load/unload mechanics; slower speed than fighters; requires 100 unassigned pop at the source planet.
-
 **Step 10 — Tutorial complete** (triggers on: second planet colonized)
 
 Prompt: "You have a functioning multi-planet empire. The rest of the game is yours — expand, develop, trade, or pick a fight. Check the Diplomacy page to see who your neighbors are. Use the event log and the nation profiles page to track the competitive landscape." Point to remaining game systems without prescribing a path.
 
 ---
 
-### What the Proposed Flow Got Right and Wrong
+### What the Original Proposal Got Right and Wrong
 
-**Good:** Mine before refinery before shipyard is the correct ordering. Both resources are needed before the shipyard can be queued.
+**Good:** Mine before refinery before shipyard is the correct ordering. Both resources are needed before the shipyard can be queued. This sequence was kept as steps 1, 2, and 4.
 
-**Problem — fighter before colonization:** In the proposed flow, building a fighter comes before probing and colonization. This creates the impression that combat is the next step after infrastructure, when in fact the correct early-game behavior for most players is to develop the home planet and colonize a second territory before worrying about military. The fighter should be introduced as part of "defense basics" in the same step as shipyard completion, not as a standalone step before exploration. The revised flow above integrates it at step 5 without making it a blocker for the colonization path.
+**Fixed — fighter before colonization:** The original proposal put fighter creation before probing and colonization, implying combat was the next step after infrastructure. The implemented flow introduces the fighter at step 5 as "defense basics" alongside shipyard completion, without making it a gate on the colonization path.
 
-**Problem — probe before colony ship:** In the proposed flow, probing happens before the colony ship step. This ordering is backwards for tutorial purposes. Probing discovers new space, but a new player's second planet does not need to be probed — the seeded map already has nearby territory. Claiming with a fleet and colonizing with a colony ship should be taught first; probing is introduced second as the tool for discovering territory beyond the pre-seeded zone.
+**Fixed — probe before colony ship:** The original proposal had probing before the colony ship step. This was reversed: colony ship is step 8, probe is step 9. The seeded map gives new players nearby claimable territory without needing probes; probing is taught as the tool for pushing beyond the pre-seeded zone.
 
-**Missing — currency and upkeep:** The proposed flow does not teach currency mechanics or upkeep at all. Currency is the primary timer on early progression (shipyard wait) and the primary ongoing cost of empire (fighter upkeep, territory upkeep). A player who doesn't understand these will not understand why they are losing currency each tick or why adding territory is eventually self-limiting. Step 3 (currency income prompt) and step 5 (fighter upkeep prompt) cover this.
+**Fixed — 90% population utilization gate:** The original proposal used 90% population utilization as the trigger for the probe/colonization steps. This gate is unachievable on a richness-1+1 home planet (pop starts at cap, never grows) and requires ~5 real days on higher-richness planets. Replaced with facility-completion gates throughout.
 
-**Missing — event log:** The proposed flow has no step that directs players to the log. For an asynchronous game, the log is the primary UI for catching up after being offline. This is critical to teach before the player has their first war or combat event.
+**Added — immediate rewards for steps 1 and 2:** Steps 1 (mine) and 2 (refinery) award resources the moment the player queues construction, not at tick completion. This provides immediate gratification during the first session rather than making new players wait 2 hours to see any feedback. Step 4 (shipyard) rewards at tick time — the wait is intentional there as part of the progression pacing.
 
-**Missing — confirmation window:** The 4-hour confirmation window and standing orders (hold/recall) are non-obvious genre departures that must be explained before a player's first fleet dispatch to potentially hostile space. Step 7 covers this in the map/fleet-dispatch tutorial prompt.
+**Added — step 3 as Planets page orientation:** The original proposal had no UI orientation step. Step 3 directs the player to the Planets tab and highlights the production section with an amber outline while the step is active. It auto-completes on page visit. This teaches currency income and upkeep at the moment those numbers first become visible.
+
+**Still missing (steps 5–10 not yet implemented):** Event log step, map/fleet dispatch step with confirmation window explanation, colony ship step, probe step, and tutorial complete state. These will be implemented in a future pass.
 
 ---
 
@@ -603,8 +611,8 @@ The ~40-hour currency wait for the shipyard is the main patience test. For the b
 
 ### Open Questions for Tutorial Design
 
-- **Prompt format:** In-game tooltip overlay, sidebar task list, or email/notification inbox? Sidebar task list (like OGame's "Advisor" or Ikariam's first-session task list) fits the async nature better than overlays. Overlays require the player to be online at the trigger moment; a task list persists. Decide before implementation.
-- **Skip/dismiss:** Can veteran players dismiss the tutorial entirely at nation creation? Recommended: yes, with an option to re-enable from settings. The beta audience will want this.
+- **Prompt format:** ~~Tooltip overlay, sidebar task list, or notification inbox?~~ **Resolved: sidebar task list.** Implemented as a persistent panel in the left nav sidebar, consistent with OGame's Advisor pattern. Overlays were rejected because they require the player to be online at the trigger moment.
+- **Skip/dismiss:** ~~Can veteran players dismiss the tutorial?~~ **Resolved: yes.** A "Skip tutorial" button is present in the sidebar panel and sets `dismissed = true` immediately. No re-enable option in the current implementation; can be added if beta feedback requests it.
 - **Starting currency:** Current 2000¤ start produces a ~40h wait for the shipyard at +50¤/tick net income. This may be acceptable for veterans but will be a dropout point for general players. Consider raising to 4000–5000¤ before beta launch. Monitor first-session completion rates.
 - **Home planet richness assignment:** The tutorial timing analysis assumes the home planet can have a pop cap above the starting 100 pop. If players pick a richness-1+1 planet (cap exactly 100), population never grows, and any growth-based tutorial gate fails. Either enforce a minimum home planet richness (e.g., mineral_richness + fuel_richness >= 4) at nation creation, or ensure no tutorial step uses population growth as a gate. The revised flow above avoids growth-based gates entirely, but the minimum richness question should be decided regardless for game balance reasons.
 - **Probe tutorial timing:** Probes cost 10000¤ and 1000 min + 500 fuel. A single-planet economy running mine + refinery generates ~50¤/tick net and 5 min + 5 fuel/tick. Reaching probe cost from tutorial-complete state takes approximately 200 ticks for currency alone. This is by design (probes are a later-game tool), but the tutorial should set this expectation explicitly rather than implying probes are a near-term goal. The step 8 prompt as written does this.
