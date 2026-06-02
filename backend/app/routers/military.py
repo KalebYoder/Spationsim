@@ -30,6 +30,7 @@ from ..schemas.nation import (
 )
 from ..routers.auth import get_current_player
 from ..routers.diplomacy import is_at_war, get_diplomacy_status
+from ..routers.tutorial import _apply_tutorial_action
 from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST
 
 router = APIRouter(prefix="/api/military", tags=["military"])
@@ -234,6 +235,7 @@ def manufacture_starfighter(
         )
         db.add(stationed)
 
+    _apply_tutorial_action(nation.id, "manufacture_fighter", db)
     db.commit()
     db.refresh(stationed)
     return _fleet_response(stationed, db)
@@ -317,6 +319,7 @@ def send_fleet(
         standing_order="hold",
     )
     db.add(transit)
+    _apply_tutorial_action(nation.id, "dispatch_fleet", db)
     db.commit()
     db.refresh(transit)
     return _fleet_response(transit, db)
@@ -532,6 +535,13 @@ def conquer_territory(
         status="processed",
     ))
 
+    colonized_count = db.query(Territory).filter(
+        Territory.nation_id == nation.id,
+        Territory.is_colonized == True,
+    ).count()
+    if colonized_count >= 2:
+        _apply_tutorial_action(nation.id, "colonize_territory", db)
+
     db.commit()
     db.refresh(dest)
     return ClaimTerritoryResponse(
@@ -611,6 +621,13 @@ def claim_territory(
             processed_at=now,
             status="processed",
         ))
+
+    colonized_count = db.query(Territory).filter(
+        Territory.nation_id == nation.id,
+        Territory.is_colonized == True,
+    ).count()
+    if colonized_count >= 2:
+        _apply_tutorial_action(nation.id, "colonize_territory", db)
 
     db.commit()
     db.refresh(territory)
@@ -717,6 +734,7 @@ def manufacture_colony_ship(
         status="stationed",
     )
     db.add(ship)
+    _apply_tutorial_action(nation.id, "manufacture_colony_ship", db)
     db.commit()
     db.refresh(ship)
     return _colony_ship_response(ship, db)

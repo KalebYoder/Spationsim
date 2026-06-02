@@ -37,7 +37,7 @@ const navLinkStyle = ({ isActive }) => ({
 export default function Layout() {
   const { player, logout } = useAuth()
   const { nation } = useNation()
-  const { tutorial, dismiss } = useTutorial()
+  const { tutorial, dismiss, completeStep9 } = useTutorial()
   const [mailUnread, setMailUnread] = useState(0)
   const [friendPending, setFriendPending] = useState(0)
   const [tradeIncoming, setTradeIncoming] = useState(0)
@@ -162,8 +162,8 @@ export default function Layout() {
           ))}
         </div>
 
-        {tutorial && !tutorial.dismissed && tutorial.current_step <= 4 && (
-          <TutorialPanel tutorial={tutorial} dismiss={dismiss} />
+        {tutorial && !tutorial.dismissed && tutorial.current_step <= 10 && (
+          <TutorialPanel tutorial={tutorial} dismiss={dismiss} completeStep9={completeStep9} />
         )}
 
         {/* Footer */}

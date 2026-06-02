@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Card, SectionLabel, EmptyState } from '../components/ui'
+import { useTutorial } from '../hooks/useTutorial'
 
 const EVENT_LABELS = {
   fleet_stationed:                    'Fleet arrived',
@@ -110,6 +111,7 @@ function TickEntry({ entry }) {
 
 export default function EventLog() {
   const [log, setLog] = useState(null)
+  const { tutorial, refresh } = useTutorial()
 
   const load = useCallback(async () => {
     const r = await fetch('/api/events/log', { credentials: 'include' })
@@ -117,6 +119,15 @@ export default function EventLog() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    if (tutorial?.current_step === 6) {
+      fetch('/api/tutorial/complete-step-6', { method: 'POST', credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data) refresh() })
+        .catch(() => {})
+    }
+  }, [tutorial?.current_step])
 
   if (log === null) return <p style={{ color: 'var(--text-muted)' }}>Loading&hellip;</p>
 

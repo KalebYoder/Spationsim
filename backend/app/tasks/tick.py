@@ -14,7 +14,7 @@ from ..models.territory_population import TerritoryPopulation
 from ..models.territory_dissent import TerritoryDissent
 from ..models.tutorial import TutorialState
 from ..models.diplomacy import Diplomacy
-from ..services.tutorial import should_complete_step, get_tutorial_reward, next_step as tutorial_next_step
+from ..services.tutorial import should_complete_step, get_tutorial_reward, next_step as tutorial_next_step, should_complete_step_on_action
 from ..models.probe import Probe
 from ..models.probe_data import ProbeData
 from ..models.probe_visibility import ProbeVisibility
@@ -784,6 +784,39 @@ def run_tick():
                 processed_at=tick_at,
                 status="processed",
             ))
+            if ship.nation_id:
+                colonized_count = db.query(Territory).filter(
+                    Territory.nation_id == ship.nation_id,
+                    Territory.is_colonized == True,
+                ).count()
+                if colonized_count >= 2:
+                    tutorial = db.query(TutorialState).filter(
+                        TutorialState.nation_id == ship.nation_id,
+                        TutorialState.dismissed == False,
+                    ).first()
+                    if tutorial and should_complete_step_on_action(tutorial.current_step, "colonize_territory"):
+                        reward = get_tutorial_reward(tutorial.current_step)
+                        nation_obj = db.get(Nation, ship.nation_id)
+                        if nation_obj:
+                            nation_obj.minerals += reward["minerals"]
+                            nation_obj.fuel += reward["fuel"]
+                            nation_obj.currency += reward["currency"]
+                        completed_step = tutorial.current_step
+                        tutorial.current_step = tutorial_next_step(tutorial.current_step)
+                        db.add(Event(
+                            type="tutorial_step_complete",
+                            payload={
+                                "step": completed_step,
+                                "nation_id": ship.nation_id,
+                                "reward_minerals": reward["minerals"],
+                                "reward_fuel": reward["fuel"],
+                                "reward_currency": reward["currency"],
+                                "tick_at": tick_at.isoformat(),
+                            },
+                            scheduled_for=tick_at,
+                            processed_at=tick_at,
+                            status="processed",
+                        ))
 
         def _record_visibility(nation_id: int, territory_id: int) -> None:
             """Mark a territory as seen by a nation (probe path tile). Idempotent."""

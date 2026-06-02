@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useLocation } from 'react-router-dom'
 
 export function useTutorial() {
   const [tutorial, setTutorial] = useState(null)
+  const location = useLocation()
 
   const fetch_ = useCallback(() => {
     fetch('/api/tutorial/', { credentials: 'include' })
@@ -10,10 +12,20 @@ export function useTutorial() {
       .catch(() => {})
   }, [])
 
-  useEffect(() => { fetch_() }, [fetch_])
+  useEffect(() => { fetch_() }, [fetch_, location.pathname])
 
   const completeStep3 = useCallback(() => {
     fetch('/api/tutorial/complete-step-3', {
+      method: 'POST',
+      credentials: 'include',
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setTutorial(data) })
+      .catch(() => {})
+  }, [])
+
+  const completeStep9 = useCallback(() => {
+    fetch('/api/tutorial/complete-step-9', {
       method: 'POST',
       credentials: 'include',
     })
@@ -28,5 +40,5 @@ export function useTutorial() {
       .catch(() => {})
   }, [])
 
-  return { tutorial, completeStep3, dismiss, refresh: fetch_ }
+  return { tutorial, completeStep3, completeStep9, dismiss, refresh: fetch_ }
 }

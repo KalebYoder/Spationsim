@@ -546,29 +546,41 @@ Prompt: "The shipyard is required to build fighters, colony ships, and probes. I
 
 Reward: +1000 currency (half the shipyard cost) — awarded at tick time when the shipyard completes, not on queue.
 
-**Step 5 — Manufacture a fighter** (triggers on: shipyard becomes active)
+**Step 5 — Manufacture a fighter** (triggers on: shipyard becomes active; completes on: fighter manufactured) **[implemented]**
 
 Prompt: "Your shipyard is ready. Manufacture a fighter — your first military unit. Fighters have an ongoing currency upkeep cost of 2¤/tick and 1 fuel/tick when deployed away from home. A small standing garrison protects against opportunistic claims. Check the Military page to deploy it." Teach: upkeep exists and is ongoing; a single fighter stationed at home is cheap insurance; the Military page is where fleet management lives; fighters have stats (FP, Shields, SI) that matter in combat.
 
-**Step 6 — Review the event log** (triggers on: fighter manufactured)
+Reward: +1000 currency — awarded immediately when the fighter is manufactured.
+
+**Step 6 — Review the event log** (triggers on: fighter manufactured; completes on: player visits /log) **[implemented]**
 
 Prompt: "Open the Log page. Every tick generates entries: resource production, population changes, fleet status, and construction completions. This is your primary tool for understanding what happened while you were offline." Teach: the game is asynchronous; players should check the log after returning; teach what each entry type means.
 
-**Step 7 — Understand the map and fleet dispatch** (triggers on: at least one fighter stationed; completes on: fleet dispatched to any node other than current location)
+Reward: none. UI orientation step.
+
+**Step 7 — Understand the map and fleet dispatch** (triggers on: at least one fighter stationed; completes on: fleet dispatched to any node other than current location) **[implemented]**
 
 Prompt: "From the Map, you can dispatch your fleet to any reachable node. Fleets travel at 2 nodes per tick. Dispatching to an unclaimed node claims it on arrival. Void nodes cannot be colonized or developed, but can be claimed to control trade routes. Dispatching to an enemy planet enters a 4-hour confirmation window before combat can occur." Teach: map fog-of-war basics; fleet pathfinding rules; the difference between planets and void nodes; the confirmation window and standing orders (hold/recall); that claiming is separate from colonizing.
 
-**Step 8 — Build and send a colony ship** (triggers on: have at least 1 claimed territory with known richness, have 100+ unassigned pop, have a shipyard)
+Reward: +500 minerals, +500 fuel — awarded immediately on fleet dispatch.
+
+**Step 8 — Build and send a colony ship** (triggers on: have at least 1 claimed territory with known richness, have 100+ unassigned pop, have a shipyard; completes on: colony ship manufactured) **[implemented]**
 
 Prompt: "Claimed territory is owned but empty — no facilities can be built until population arrives. A colony ship loads up to 100 population from any colonized planet you own and carries it to a claimed planet. Build one at your shipyard. Colony ships travel 1 node per tick — slower than fighters." Teach: the two-step claim/colonize distinction; colony ship load/unload mechanics; slower speed than fighters; requires 100 unassigned pop at the source planet.
 
-**Step 9 — Scout with a probe** (triggers on: colony ship manufactured)
+Reward: +500 minerals, +1000 fuel — awarded immediately when the colony ship is manufactured.
+
+**Step 9 — Scout with a probe** (triggers on: colony ship manufactured; completes on: player clicks "Got it" in sidebar panel) **[implemented]**
 
 Prompt: "When nearby space is claimed or too contested to expand into safely, probes let you scout further out. A probe reveals the resource richness of its destination — giving you intelligence before you commit a colony ship. Probe range is 10 nodes from your nearest colony. Data is destination-only (not along the path) and can be sold to other players. Build a probe at your shipyard when resources allow." Teach: probes are a tool for finding expansion opportunities beyond the contested frontier, not a prerequisite for all colonization; probe cost; range limitation; data is destination-only; the information economy exists; probe data is non-exclusive on sale.
 
-**Step 10 — Tutorial complete** (triggers on: second planet colonized)
+Reward: none. Informational step; player acknowledges with "Got it" button in the tutorial sidebar.
+
+**Step 10 — Tutorial complete** (triggers on: step 9 acknowledged; completes on: second planet colonized) **[implemented]**
 
 Prompt: "You have a functioning multi-planet empire. The rest of the game is yours — expand, develop, trade, or pick a fight. Check the Diplomacy page to see who your neighbors are. Use the event log and the nation profiles page to track the competitive landscape." Point to remaining game systems without prescribing a path.
+
+Reward: +1000 minerals, +1000 fuel, +2000 currency — awarded immediately on second territory colonization.
 
 ---
 
@@ -586,7 +598,7 @@ Prompt: "You have a functioning multi-planet empire. The rest of the game is you
 
 **Added — step 3 as Planets page orientation:** The original proposal had no UI orientation step. Step 3 directs the player to the Planets tab and highlights the production section with an amber outline while the step is active. It auto-completes on page visit. This teaches currency income and upkeep at the moment those numbers first become visible.
 
-**Still missing (steps 5–10 not yet implemented):** Event log step, map/fleet dispatch step with confirmation window explanation, colony ship step, probe step, and tutorial complete state. These will be implemented in a future pass.
+**All 10 steps now implemented.** Steps 5–10 follow the same pattern as 1–4: action-triggered steps award rewards immediately in the relevant router endpoint; view/acknowledgement steps complete via dedicated API endpoints called by the frontend.
 
 ---
 
@@ -594,16 +606,16 @@ Prompt: "You have a functioning multi-planet empire. The rest of the game is you
 
 | Tutorial step | Gate condition | Real-time estimate |
 |---|---|---|
-| Build mine | Nation created | Day 1, first session |
-| Build refinery | Mine queued or active | Day 1, first session |
-| Understand currency | First mine or refinery active | Day 1, 2h in |
-| Build shipyard | Mine + refinery active | Day 1–2 (currency accumulation, ~40h) |
-| Manufacture fighter | Shipyard active | Day 2 or 3 |
-| Read event log | Fighter manufactured | Day 2 or 3 |
-| Fleet dispatch / map | Fighter stationed | Day 2 or 3 |
-| Colony ship | Claimed territory + 100 pop available | Day 3–5 |
-| Send probe | Colony ship manufactured | Day 3–5 |
-| Tutorial complete | Second territory colonized | Day 3–5 |
+| Build mine (+500 min, +500¤) | Nation created | Day 1, first session |
+| Build refinery (+500 fuel, +500¤) | Mine queued or active | Day 1, first session |
+| Review planets (+100 min, +100 fuel, +500¤) | Mine or refinery active | Day 1, 2h in |
+| Build shipyard (+1000¤) | Mine + refinery active | Day 1–2 (~40h currency wait) |
+| Manufacture fighter (+1000¤) | Shipyard active | Day 2 or 3 |
+| Read event log (no reward) | Fighter manufactured | Day 2 or 3 |
+| Dispatch fleet (+500 min, +500 fuel) | Fighter stationed | Day 2 or 3 |
+| Build colony ship (+500 min, +1000 fuel) | Claimed territory + 100 pop + shipyard | Day 3–5 |
+| Scout with probe — Got it (no reward) | Colony ship manufactured | Day 3–5 |
+| Colonize territory (+1000 min, +1000 fuel, +2000¤) | Step 9 acknowledged | Day 3–5 |
 
 ---
 

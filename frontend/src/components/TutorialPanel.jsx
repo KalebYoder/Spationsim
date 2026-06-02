@@ -1,12 +1,18 @@
 const STEPS = [
-  { step: 1, title: "Build a Mine", desc: "Construct a mine on your home planet to begin extracting minerals.", reward: "+500 minerals, +500 currency on completion" },
-  { step: 2, title: "Build a Refinery", desc: "Construct a refinery to produce fuel for ships and probes.", reward: "+500 fuel, +500 currency on completion" },
-  { step: 3, title: "Review Planet Production", desc: "Visit the Planets tab to see your resource gain and loss rates.", reward: "+100 minerals, +100 fuel, +500 currency on completion" },
-  { step: 4, title: "Build a Shipyard", desc: "The shipyard is required for all military and exploration units.", reward: "+1000 currency on completion" },
+  { step: 1,  title: "Build a Mine",            desc: "Construct a mine on your home planet to begin extracting minerals.",               reward: "+500 minerals, +500 currency on completion" },
+  { step: 2,  title: "Build a Refinery",         desc: "Construct a refinery to produce fuel for ships and probes.",                      reward: "+500 fuel, +500 currency on completion" },
+  { step: 3,  title: "Review Planet Production", desc: "Visit the Planets tab to see your resource gain and loss rates.",                 reward: "+100 minerals, +100 fuel, +500 currency on completion" },
+  { step: 4,  title: "Build a Shipyard",         desc: "The shipyard is required for all military and exploration units.",                reward: "+1000 currency on completion" },
+  { step: 5,  title: "Manufacture a Fighter",    desc: "Build your first military unit. A stationed fighter protects your home planet.",  reward: "+1000 currency on completion" },
+  { step: 6,  title: "Review the Event Log",     desc: "Visit the Event Log to see what happened while you were offline.",               reward: null },
+  { step: 7,  title: "Dispatch a Fleet",         desc: "Send your fleet to any node on the map to learn how movement works.",            reward: "+500 minerals, +500 fuel on completion" },
+  { step: 8,  title: "Build a Colony Ship",      desc: "Colony ships carry population to claimed territories, enabling development.",    reward: "+500 minerals, +1000 fuel on completion" },
+  { step: 9,  title: "Scout with a Probe",       desc: "When nearby space is contested, probes reveal resource richness of distant destinations before you commit a colony ship.", reward: null },
+  { step: 10, title: "Colonize a Territory",     desc: "Claim an unclaimed planet with your fleet, then deliver population via colony ship.", reward: "+1000 minerals, +1000 fuel, +2000 currency on completion" },
 ]
 
-export default function TutorialPanel({ tutorial, dismiss }) {
-  if (!tutorial || tutorial.current_step > 4 || tutorial.dismissed) return null
+export default function TutorialPanel({ tutorial, dismiss, completeStep9 }) {
+  if (!tutorial || tutorial.current_step > 10 || tutorial.dismissed) return null
 
   const current = STEPS.find(s => s.step === tutorial.current_step)
   if (!current) return null
@@ -35,7 +41,7 @@ export default function TutorialPanel({ tutorial, dismiss }) {
           {current.title}
         </span>
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-          Step {tutorial.current_step} of 4
+          Step {tutorial.current_step} of 10
         </span>
       </div>
 
@@ -47,6 +53,23 @@ export default function TutorialPanel({ tutorial, dismiss }) {
         <p style={{ fontSize: 11, color: 'var(--teal)', margin: '0 0 8px' }}>
           {current.reward}
         </p>
+      )}
+
+      {tutorial.current_step === 9 && (
+        <button
+          onClick={completeStep9}
+          style={{
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            cursor: 'pointer',
+            color: 'var(--text-muted)',
+            fontSize: 11,
+            marginRight: 12,
+          }}
+        >
+          Got it
+        </button>
       )}
 
       <button
