@@ -43,45 +43,22 @@ export default function Layout() {
   const [tradeIncoming, setTradeIncoming] = useState(0)
 
   useEffect(() => {
-    const fetchUnread = () => {
-      fetch('/api/mail/unread-count', { credentials: 'include' })
+    const fetchNotifications = () => {
+      fetch('/api/notifications', { credentials: 'include' })
         .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data) setMailUnread(data.count) })
-        .catch(() => {})
-    }
-    fetchUnread()
-    const id = setInterval(fetchUnread, 30000)
-    return () => clearInterval(id)
-  }, [])
-
-  useEffect(() => {
-    if (!nation) return
-    const fetchFriendPending = () => {
-      fetch('/api/diplomacy/friends', { credentials: 'include' })
-        .then(r => r.ok ? r.json() : [])
         .then(data => {
-          const incoming = data.filter(e => e.status === 'friend_pending' && e.requested_by !== nation.id).length
-          setFriendPending(incoming)
+          if (data) {
+            setMailUnread(data.mail_unread)
+            setFriendPending(data.friend_pending)
+            setTradeIncoming(data.trade_incoming)
+          }
         })
         .catch(() => {})
     }
-    fetchFriendPending()
-    const id = setInterval(fetchFriendPending, 60000)
+    fetchNotifications()
+    const id = setInterval(fetchNotifications, 45000)
     return () => clearInterval(id)
-  }, [nation])
-
-  useEffect(() => {
-    if (!nation) return
-    const fetchTrade = () => {
-      fetch('/api/trade', { credentials: 'include' })
-        .then(r => r.ok ? r.json() : [])
-        .then(data => setTradeIncoming(data.filter(t => t.to_nation_id === nation.id).length))
-        .catch(() => {})
-    }
-    fetchTrade()
-    const id = setInterval(fetchTrade, 60000)
-    return () => clearInterval(id)
-  }, [nation])
+  }, [])
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
