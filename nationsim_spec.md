@@ -550,7 +550,7 @@ Prompt: "Open the Log page. Every tick generates entries: resource production, p
 
 Prompt: "From the Map, you can dispatch your fleet to any reachable unclaimed planet. Fleets travel at 2 nodes per tick. Dispatching to an unclaimed planet claims it on arrival. Void tiles are impassable walls — plan a valid path. Dispatching to an enemy planet enters a 4-hour confirmation window before combat can occur." Teach: map fog-of-war basics; fleet pathfinding rules; the confirmation window and standing orders (hold/recall); that claiming is separate from colonizing.
 
-**Step 8 — Scout with a probe** (triggers on: first claimed territory that is not home, OR first colonized second territory)
+**Step 8 — Scout with a probe** (triggers on: shipyard becomes active)
 
 Prompt: "Probes are expensive instruments for discovering new space. Your probe range is 10 nodes from your nearest colony. Dispatching a probe reveals destination richness — but only at the destination, not along the path. Probe data can be sold to other players. Build a probe at your shipyard when resources allow." Teach: probe cost; range limitation; data is destination-only; the information economy exists; probes can be recalled; probe data is non-exclusive on sale.
 
@@ -593,7 +593,7 @@ Prompt: "You have a functioning multi-planet empire. The rest of the game is you
 | Manufacture fighter | Shipyard active | Day 2 or 3 |
 | Read event log | Fighter manufactured | Day 2 or 3 |
 | Fleet dispatch / map | Fighter stationed | Day 2 or 3 |
-| Send probe | First claimed second territory | Day 3–5 |
+| Send probe | Shipyard active | Day 2 or 3 |
 | Colony ship | Claimed territory + 100 pop available | Day 3–5 |
 | Tutorial complete | Second territory colonized | Day 3–5 |
 
