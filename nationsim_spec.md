@@ -550,11 +550,13 @@ Prompt: "Open the Log page. Every tick generates entries: resource production, p
 
 Prompt: "From the Map, you can dispatch your fleet to any reachable unclaimed planet. Fleets travel at 2 nodes per tick. Dispatching to an unclaimed planet claims it on arrival. Void tiles are impassable walls — plan a valid path. Dispatching to an enemy planet enters a 4-hour confirmation window before combat can occur." Teach: map fog-of-war basics; fleet pathfinding rules; the confirmation window and standing orders (hold/recall); that claiming is separate from colonizing.
 
-**Step 8 — Scout with a probe** (triggers on: shipyard becomes active)
+**Step 8 — Build and send a colony ship** (triggers on: have at least 1 claimed territory with known richness, have 100+ unassigned pop, have a shipyard)
+
+Prompt: "Claimed territory is owned but empty — no facilities can be built until population arrives. A colony ship loads up to 100 population from any colonized planet you own and carries it to a claimed planet. Build one at your shipyard. Colony ships travel 1 node per tick — slower than fighters." Teach: the two-step claim/colonize distinction; colony ship load/unload mechanics; slower speed than fighters; requires 100 unassigned pop at the source planet.
+
+**Step 9 — Scout with a probe** (triggers on: shipyard becomes active)
 
 Prompt: "Probes are expensive instruments for discovering new space. Your probe range is 10 nodes from your nearest colony. Dispatching a probe reveals destination richness — but only at the destination, not along the path. Probe data can be sold to other players. Build a probe at your shipyard when resources allow." Teach: probe cost; range limitation; data is destination-only; the information economy exists; probes can be recalled; probe data is non-exclusive on sale.
-
-**Step 9 — Build and send a colony ship** (triggers on: have at least 1 claimed territory with known richness, have 100+ unassigned pop, have a shipyard)
 
 Prompt: "Claimed territory is owned but empty — no facilities can be built until population arrives. A colony ship loads up to 100 population from any colonized planet you own and carries it to a claimed planet. Build one at your shipyard. Colony ships travel 1 node per tick — slower than fighters." Teach: the two-step claim/colonize distinction; colony ship load/unload mechanics; slower speed than fighters; requires 100 unassigned pop at the source planet.
 
@@ -571,8 +573,6 @@ Prompt: "You have a functioning multi-planet empire. The rest of the game is you
 **Problem — fighter before colonization:** In the proposed flow, building a fighter comes before probing and colonization. This creates the impression that combat is the next step after infrastructure, when in fact the correct early-game behavior for most players is to develop the home planet and colonize a second territory before worrying about military. The fighter should be introduced as part of "defense basics" in the same step as shipyard completion, not as a standalone step before exploration. The revised flow above integrates it at step 5 without making it a blocker for the colonization path.
 
 **Problem — probe before colony ship:** In the proposed flow, probing happens before the colony ship step. This ordering is backwards for tutorial purposes. Probing discovers new space, but a new player's second planet does not need to be probed — the seeded map already has nearby territory. Claiming with a fleet and colonizing with a colony ship should be taught first; probing is introduced second as the tool for discovering territory beyond the pre-seeded zone.
-
-**Problem — 90% pop gate:** Already addressed above. Do not use.
 
 **Missing — currency and upkeep:** The proposed flow does not teach currency mechanics or upkeep at all. Currency is the primary timer on early progression (shipyard wait) and the primary ongoing cost of empire (fighter upkeep, territory upkeep). A player who doesn't understand these will not understand why they are losing currency each tick or why adding territory is eventually self-limiting. Step 3 (currency income prompt) and step 5 (fighter upkeep prompt) cover this.
 
@@ -593,8 +593,8 @@ Prompt: "You have a functioning multi-planet empire. The rest of the game is you
 | Manufacture fighter | Shipyard active | Day 2 or 3 |
 | Read event log | Fighter manufactured | Day 2 or 3 |
 | Fleet dispatch / map | Fighter stationed | Day 2 or 3 |
-| Send probe | Shipyard active | Day 2 or 3 |
 | Colony ship | Claimed territory + 100 pop available | Day 3–5 |
+| Send probe | Shipyard active | Day 2 or 3 |
 | Tutorial complete | Second territory colonized | Day 3–5 |
 
 The ~40-hour currency wait for the shipyard is the main patience test. For the beta audience of veteran nation-sim players, this is in line with OGame's early mine→metal storage→shipyard cadence. It may need shortening for a general audience. Consider raising starting currency to 5000¤ to shorten this to ~20h if beta feedback identifies it as a dropout point.
