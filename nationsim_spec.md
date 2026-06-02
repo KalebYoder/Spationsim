@@ -144,14 +144,14 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 - Probe data can be offered in the trade window: recipient sees richness and reachability (BFS from their territories) but **not coordinates**; `ProbeDataAccess` and `ProbeVisibility` granted on trade execution; probe data entries are also displayed in the "Your Intelligence" table on the Probes page
 
 ### Combat & Military
-- Single unit type: starfighter (ATK 2, Shields 1, Structural Integrity 5, 2 nodes/tick; costs 15 min + 30 fuel + 1000¤ each)
+- Single unit type: starfighter (FP 2, Shields 1, Structural Integrity 5, 2 nodes/tick; costs 15 min + 30 fuel + 1000¤ each)
 - Fleet movement: dispatch, in-transit travel, arrival landing with auto-merge into any existing stationed fleet of the same nation; dispatching defaults to the full fleet — specifying fewer units splits the fleet, leaving the remainder stationed
 - Fleet pathfinding: dispatch validates reachability via BFS through passable (own/unclaimed, non-void) tiles; enemy tiles are dispatchable targets but not transit corridors; void tiles are impassable walls; en-route fleets do not auto-merge
 - Vacation mode: instant entry, 48h minimum stay, 48h aggression lockout on exit, untargetable while active
 - War declaration: 2-tick (4h) grace period before hostilities; blocked against vacation-mode targets; 24h minimum war duration
 - Confirmation window: fleet entering enemy territory enters `pending_confirmation` for 2 ticks (4h); visible to both sides; attacker can confirm or recall; expiry executes standing order
 - Standing orders: hold (default) or recall — applied on confirmation window expiry
-- Combat damage model (shields): `net_damage = max(0, firing_count × ATK − target_count × Shields)`; `losses = max(1, round(net_damage / Structural_Integrity)) if net_damage > 0 else 0`. Both sides fire simultaneously each tick. Shields absorb attacks below the threshold entirely. Implemented in `services/combat.py`, tested independently.
+- Combat damage model (shields): `net_damage = max(0, firing_count × FP − target_count × Shields)`; `losses = max(1, round(net_damage / Structural_Integrity)) if net_damage > 0 else 0`. Both sides fire simultaneously each tick. Shields absorb attacks below the threshold entirely. Implemented in `services/combat.py`, tested independently.
 - Resource drain 5%/tick minerals + fuel when territory is undefended (engaged fleet, no defenders)
 - Holding fleet attrition: `max(1, round(unit_count × 0.01))` losses per tick; fleet deleted at zero with event logged
 - Territory conquest: an `engaged` fleet at an undefended enemy planet (no stationed defenders) can conquer via POST /fleets/{id}/conquer; ownership transfers to attacker, fleet stations at the captured territory; events logged for both attacker and defender
@@ -179,7 +179,7 @@ The genre's central UX failure is punishing players for being offline. Mitigatio
 
 ### Dissent System
 
-Dissent is a per-territory integer (0–100) representing political unrest caused by military pressure. It degrades production and suppresses population growth. It decays over time and can be mitigated by a new facility. It does not punish inaction or offline play — it rises only because an enemy fleet is physically present or because the nation is actively at war.
+Dissent is a per-territory integer (0–100) representing political unrest caused by military pressure. It degrades mineral and fuel production on a continuous curve. It decays over time and can be mitigated by the Propaganda Office facility. It does not punish inaction or offline play — it rises only because an enemy fleet is physically present or because the nation is actively at war.
 
 ---
 
@@ -203,16 +203,19 @@ Only colonized territories get a row. Void nodes (no population) do not accumula
 
 | Trigger | Dissent added | Notes |
 |---|---|---|
-| Nation is at war | +2 to **all** owned territories | War-wide cost; unavoidable while at war |
-| Enemy fleet holding on this territory | +5 | Replaces (does not stack with) the engaged bonus |
-| Enemy fleet engaged on this territory | +8 | Active battle zone |
-| Territory undefended and actively being resource-drained | +10 | Looting is directly felt by the population |
+| Nation is at war — **aggressor** | +3 to **all** owned territories | Aggressor = the nation that declared war (`declared_by` on the diplomacy row) |
+| Nation is at war — **defender** | +2 to **all** owned territories | Lower cost; the defender did not choose this war |
+| Enemy fleet **holding** on this territory | +6 | Fleet committed but not yet in active combat |
+| Enemy fleet **engaged** on this territory | +10 | Active combat or undefended occupation — same trigger whether defenders are present or not |
 | Territory just conquered (changed hands) | Set to 60 instantly | Conquered populations start hostile |
+
+Fleet-presence bonuses stack on top of the war-wide penalty. A defender's frontline territory under an engaged fleet accumulates +2 (war) + +10 (engaged) = +12/tick before decay.
 
 **Hard rules:**
 - Dissent is clamped to [0, 100].
 - Dissent does not rise on vacation-mode nations — the tick is frozen for them, so no accumulation occurs.
 - Dissent does not rise from the war declaration window or fleet dispatch alone. Only physically present enemy fleets and the war-state flag trigger dissent. This prevents declaration-and-recall harassment.
+- Aggressor identity is recorded as `declared_by` on the `diplomacy` table row at declaration time and never mutated. It cannot be reclassified mid-war.
 
 ---
 
@@ -220,61 +223,80 @@ Only colonized territories get a row. Void nodes (no population) do not accumula
 
 **Production penalty** (minerals and fuel only; currency income is unaffected):
 
-| Dissent | Production multiplier |
-|---|---|
-| 0–19 | 1.00 — no effect |
-| 20–39 | 0.90 — 10% reduction (grumbling) |
-| 40–59 | 0.75 — 25% reduction (unrest) |
-| 60–79 | 0.55 — 45% reduction (protest) |
-| 80–100 | 0.30 — 70% reduction (revolt) |
+Continuous power curve. Below 25 dissent there is no effect. At 75 dissent exactly half of production is lost. At 100 dissent production is fully suppressed. The rate of loss accelerates as dissent rises.
 
-**Population growth suppression:**
+```
+t       = max(0, (d − 25) / 75)          # 0 at d=25, 1 at d=100
+modifier = max(0.0, 1.0 − t ** n)        # n = ln(2)/ln(1.5) ≈ 1.71
+```
 
-| Dissent | Growth effect |
-|---|---|
-| 0–39 | Unaffected |
-| 40–59 | Growth rate halved |
-| 60–100 | Growth rate zeroed (not negative — population does not flee or die) |
+The exponent `n ≈ 1.71` is derived from the anchor constraint modifier(75) = 0.5. It is stored as `DISSENT_CURVE_EXPONENT` in constants.py and can be tuned without changing the formula structure.
+
+Reference values:
+
+| Dissent | Modifier | Production loss |
+|---|---|---|
+| 0–25 | 1.00 | none |
+| 50 | ≈ 0.85 | ~15% |
+| 62 | ≈ 0.70 | ~30% |
+| 75 | 0.50 | **50%** (anchor) |
+| 87 | ≈ 0.28 | ~72% |
+| 100 | 0.00 | complete |
+
+**Population growth suppression:** deferred — not yet decided. Do not implement until the dissent production penalty has been tested in beta and the growth-suppression mechanic has been explicitly designed.
 
 ---
 
 #### Decay (per tick)
 
-| Condition | Decay per tick |
-|---|---|
-| At peace, no enemy fleet | −3 |
-| At war, no enemy fleet on this territory | −1 |
-| Enemy fleet holding or engaged on this territory | 0 (no decay) |
+| Condition | Base decay | With Propaganda Office |
+|---|---|---|
+| At peace, no enemy fleet | −3 | −5 |
+| At war, no enemy fleet on this territory | −2 | −4 |
+| Enemy fleet holding or engaged on this territory | 0 | −3 |
 
-At war with no enemy fleet present, non-frontline territories accumulate a net **+1 dissent/tick** (+2 war penalty − 1 decay). A Settlement Hub raises decay to −3, producing a net −1/tick and keeping non-frontline territories stable during a prolonged war. Front-line planets under occupation continue to climb. A planet maxed at 100 dissent recovers to 0 in ~33 ticks (66 hours) at peacetime rate, or ~100 ticks at war rate without a hub (no occupation).
+The Propaganda Office provides **+2 additional decay** at peace and at war without occupation, and **+3 additional decay** while enemy fleet is present (holding or engaged). The amplified bonus under occupation represents active local resistance; it slows the dissent rise but cannot halt it against a committed occupying force.
+
+**Net balance examples:**
+
+| Scenario | Net per tick |
+|---|---|
+| Defender, non-frontline, no office | +2 − 2 = **0** (stable) |
+| Defender, non-frontline, with office | +2 − 4 = **−2** (slowly improving) |
+| Aggressor, home territory, no office | +3 − 2 = **+1** (slow climb — war is costly at home) |
+| Aggressor, home territory, with office | +3 − 4 = **−1** (stable with office) |
+| Defender, engaged fleet, no office | +2 + 10 + 0 = **+12** (rapid rise) |
+| Defender, engaged fleet, with office | +2 + 10 − 3 = **+9** (still rising, but slower) |
+
+A planet at 100 dissent recovers to 0 in ~33 ticks (66 hours) at peacetime rate (−3/tick), or ~50 ticks (100 hours) at war rate (−2/tick), assuming no occupation.
 
 ---
 
 #### Event Logging
 
-Log an event to the events table only when dissent **crosses a threshold** (20, 40, 60, 80 — and back down through each). Do not log every tick delta. The threshold-crossing event fires a player-visible notification; the raw value is always available in the territory detail view.
+Log an event to the events table only when dissent **crosses a threshold** (25, 50, 75, 100 — and back down through each). Do not log every tick delta. These correspond to the formula's onset point (25), ~11% loss (50), ~44% loss (75), and complete suppression (100). The threshold-crossing event fires a player-visible notification; the raw value is always available in the territory detail view.
 
 ---
 
-#### Settlement Hub (New Facility)
+#### Propaganda Office (New Facility)
 
 One new facility that explicitly mitigates dissent. No other facilities get hidden morale bonuses.
 
 | Field | Value |
 |---|---|
-| Type key | `settlement_hub` |
-| Build cost | 200 minerals + 100 fuel + 3000¤ |
+| Type key | `propaganda_office` |
+| Build cost | 500 minerals + 250 fuel + 6000¤ |
 | Population required | 20 assigned |
 | Effect | +2 additional dissent decay per tick on this territory |
 | Limit | One per territory (enforced at endpoint level) |
 
-Combined decay with a Settlement Hub:
+Decay bonus: **+2/tick** normally; **+3/tick** while an enemy fleet is present (holding or engaged). The amplified bonus rewards defenders who invested in the facility pre-war.
 
-| Condition | Decay per tick |
-|---|---|
-| At peace + hub | −5 |
-| At war, no occupation + hub | −3 (exactly cancels the +2/tick war penalty — hub keeps a non-frontline planet stable) |
-| Under occupation + hub | −2 (insufficient to offset +5/+8 occupation; hub slows the rise but does not halt it) |
+| Condition | Base decay | With office |
+|---|---|---|
+| At peace | −3 | −5 |
+| At war, no occupation | −2 | −4 |
+| Under occupation | 0 | −3 |
 
 ---
 
@@ -293,7 +315,7 @@ Deferred to post-beta. The attacker currently does not accumulate dissent. If ve
 
 **Combat (Phase 4)**
 - [ ] Pre-engagement skirmishing during `pending_confirmation` — small attrition losses each tick while fleet waits in the confirmation window (separate from holding fleet attrition, which is already implemented)
-- [ ] Dissent system implementation — table, tick logic, production/growth penalties, decay, Settlement Hub facility, conquest-set behavior
+- [ ] Dissent system implementation — table, tick logic, production/growth penalties, decay, Propaganda Office facility, conquest-set behavior
 
 **Player Interaction (Phase 5)**
 - [ ] Probe data public marketplace — a listing board where players post probe data for sale at a fixed price; any nation can browse and purchase; seller retains data (already implemented for direct trade; public storefront is the remaining work)
@@ -311,10 +333,6 @@ Deferred to post-beta. The attacker currently does not accumulate dissent. If ve
 - **Probes very expensive** - Exploration of new space is intended to be a later-game feature, players should first be trying to colonize territory that has already been discovered. On the other hand, what about once the original map has already been fully claimed, at what point should a new cluster be generated for new players to claim?
 
 **Missing Standard Features**
-
-**Implementation Gaps**
-- **Probes can silently strand mid-transit** — if `_next_step()` resolves to a hex not yet generated, the probe stops moving with no event, no notification, and no recovery. Affects probe paths through ungenerated space.
-- **Colony ship reachability not enforced** — ships can be dispatched across the entire map with no adjacency or path check, bypassing the flanking/leapfrog design intent. The spec requires ships to travel through owned or reachable space; the endpoint does not verify this.
 
 ---
 
@@ -336,13 +354,18 @@ Deferred to post-beta. The attacker currently does not accumulate dissent. If ve
 - **Dissent: attacker-side penalty?** Should the attacker also accumulate +2/tick dissent on their home territories for the duration of a war? Argument for: prolonged aggressive wars should have internal political cost. Argument against: in a 20–50 player beta, making aggression too costly reduces conflict below the threshold needed to test the war system. Recommendation: defer to post-beta unless veteran feedback says wars last too long.
 - **Dissent: public or private?** Should a territory's dissent value be visible on the public nation profile? Public dissent creates interesting espionage-lite gameplay (attackers can see which planets are vulnerable) but lets third parties opportunistically pile on a nation already under pressure. Bring to veteran players.
 - **Dissent: currency penalty?** The current design only penalizes mineral/fuel production, not currency income. If financially-focused players should feel war pressure more directly, add a currency multiplier at the same thresholds. Defer to beta feedback.
+- **Dissent: population growth suppression?** Deferred by design decision. The production curve penalty is the primary mechanic. Whether high dissent should also suppress population growth (slowing the recovery of territory capacity after a war) has not been decided. Consider after beta: if players find wars leave no lasting mark once peace is reached and dissent decays, growth suppression is the lever to pull. If the production penalty alone is already punishing, leave it out.
 - **Dissent on recapture/liberation:** If Nation A captures a planet from Nation B (dissent set to 60), and Nation B then retakes it, does dissent reset to 0 (liberation bonus) or continue from its current value? A reset rewards successful defense and is trivially implementable. Decide before territory conquest is implemented.
 - **Dissent before conquest is implemented:** Dissent is useful as a pure combat-pressure mechanic (rising from holding/engaged fleets) even before territory conquest lands. The conquest-reset behavior (set to 60 on capture, reset on liberation) can be specified now and implemented alongside conquest.
 Developer thoughts: Dissent should be raised for a planet when it specifically is beseiged, but maybe not for other planets when they are being attacked. Maybe more dissent for aggression wars and less for defense (requires creating a snapshot of original territory at war declaration).
 - Population growth rate tuning and whether specific infrastructure types (beyond mines/refineries) should influence it.
+- **Population cap range per territory**: the current cap is `50 × (mineral_richness + fuel_richness)`, giving a range of 50 (weakest planet, richness 1+0) to 500 (peak planet, richness 5+5). With facility density now driving currency income, low-richness planets are punished twice — less resource production AND a lower population cap limiting how many facilities can be staffed. Consider whether the cap formula should have a higher floor (e.g., a minimum cap regardless of richness) or a less steep slope so that rim planets can still staff a meaningful number of facilities.
 - Whether colony vulnerability window (low population, low development) creates enough natural strategic depth or needs explicit mechanics.
 - **Vacation mode as a territory blocker**: a player in vacation mode indefinitely still denies staging ground during alliance wars. The 48h lockout solves rapid in/out exploitation but not a committed long-term blocker. Possible solutions (not yet designed): war-declaration entry block; minimum fleet-presence requirement to invoke vacation; admin enforcement. Defer until beta feedback confirms whether this is a real problem in practice.
 - **Defender repositioning during war declaration window**: when war is declared, both nations enter a 2-tick (4-hour) grace period before hostilities begin. During this window a defender who sees the `war_declared` notification can freely withdraw fleets, consolidate defenses, and reposition units — potentially negating any element of surprise and making offensive declarations weaker than intended. Possible mitigations: freeze fleet movement for both parties during the window; only restrict the attacker's fleet movement; apply a "mobilization" phase where both sides can reinforce but not reposition out of their own territory; limit the window to first-ever war declarations. No decision made — bring to veteran players during closed beta.
+- **Occupation drain: what fraction of territory production should the attacker steal?** Currently the occupier drains 100% of the occupied territory's per-tick mineral and fuel output from the defender's stockpile, but the drained resources vanish (the attacker does not receive them). Two separate decisions: (1) What fraction of production is drained — 100% may make occupation so punishing that defenders prefer to sue for peace immediately, removing interesting mid-war decisions. A lower fraction (50%? 25%?) gives the defender more time to respond while still creating meaningful economic pressure. (2) Does the attacker receive the drained resources, or do they vanish? Receiving them makes conquest economically self-funding (CyberNations raiding model) which can incentivize aggressive warmongers. Vanishing them is pure denial pressure. Both have precedent. Decide before beta so conquest behavior is tunable without a model change.
+- **Occupation drain: should drain scale with occupying fleet size?** Currently all fleet sizes drain identically — 1 fighter and 500 fighters drain the same territory production. Scaling with fleet size (e.g., `min(production, fleet_size × drain_per_unit)`) would make large occupation forces more threatening and give defenders a meaningful choice about whether to contest with a small garrison vs. concede. It would also make single-unit deep-strike raids (send 1 fighter far behind lines to drain a planet) less effective than a real occupation force. Downside: adds complexity and could disincentivize the small-garrison defender playstyle. Consider alongside the fraction decision above — the two parameters interact.
+- **Territory count upkeep double-disadvantages rim players — monitor during beta.** The `k × N²` territory upkeep (k=10) creates a currency drain that scales with the number of territories owned, not their richness. Rim planets are already less economically productive (lower richness → fewer facilities → lower I per territory), which lowers their optimal empire size N*. The intended rim playstyle is a small, well-developed cluster used primarily as probe launch points for exploration income rather than raw resource production. If beta feedback shows rim players are squeezed out of viability by the combined effect of low facility income and territory count upkeep, consider: (a) flooring N² at a small constant for the first few territories, (b) reducing k, or (c) giving rim territories (distance_from_center above a threshold) a reduced upkeep weight in the formula. Do not change k without first observing actual beta expansion patterns.
 
 ---
 
@@ -359,21 +382,23 @@ Developer thoughts: Dissent should be raised for a planet when it specifically i
 | Colonization method | Two-step: fleet claims, colony ship populates | Fleets (starfighters) claim unclaimed territory on arrival; territory starts with zero population. Colony ships (500 minerals, 1000 fuel, 1 node/tick, 100 pop capacity) transfer population to enable facility construction and resource extraction. Probes cannot claim. |
 | Shipyard design | Single facility builds both starfighters and colony ships | Costs 150 minerals + 60 fuel + 2000¤; requires 40 assigned population to operate. |
 | Colony ship build cost | 500 minerals, 1000 fuel | No population cost at build time — colony ships are vessels, not population units. Population consumed only via the load action. Not subject to the general cost rebalance, to avoid blocking early colonization. |
-| Territory income | 500 currency/tick per colonized territory with ≥1 active mine or refinery | Bare claimed territory generates zero currency. Keeps development meaningful. |
+| Territory income | 30 currency/tick per active mine or refinery | Scales with facility count per territory rather than a flat per-territory bonus. A territory with 1 mine earns 30¤/tick; one with 3 mines + 2 refineries earns 150¤/tick. Bare claimed territory generates zero currency. Rewards development depth over raw territory count. |
 | Territory rename cooldown | 24 hours (12 ticks) | Prevents mid-war map confusion via rapid renames. Error response includes exact time remaining. |
 | Map generation | Dynamic, probe-driven; integer richness 1–5 | Seeder creates full cluster + 6-hex void ring per cluster. Probes dynamically generate territory rows for uncharted hexes they scan. Richness weighted: 75% chance of 5 at cluster center, 75% chance of 1 at rim, linear slide. Void-zone hexes have 1/1000 chance of becoming an anomaly node (5–10 richness in one resource, 0 in the other). |
 | Resource production scale | Normal 5–10/tick, anomaly 20–30/tick | Formula is territory-type-aware: normal `max(5, round(richness × 2))`; anomaly `round(richness × 2 + 10)`. Replaces flat `round(2 × richness)`. Closes the 5× rim/center gap and makes anomalies meaningfully more productive. |
-| Resource cost rebalance | Tripled facility and fighter mineral/fuel costs; large currency costs added | Mine: 60 min + 30 fuel + 500¤. Refinery: 30 min + 60 fuel + 500¤. Shipyard: 150 min + 60 fuel + 2000¤. Probe factory: 30 min + 15 fuel. Fighter: 15 min + 30 fuel + 1000¤. Probe: 1000 min + 500 fuel + 10000¤. Colony ships unchanged. Rationale: slow expansion once the initial map is settled; currency costs create a meaningful spending sink that anchors the probe data marketplace. |
+| Resource cost rebalance | Tripled facility and fighter mineral/fuel costs; large currency costs added | Mine: 60 min + 30 fuel + 500¤. Refinery: 30 min + 60 fuel + 500¤. Shipyard: 150 min + 60 fuel + 2000¤. Fighter: 15 min + 30 fuel + 1000¤. Probe: 1000 min + 500 fuel + 10000¤. Colony ships unchanged. Rationale: slow expansion once the initial map is settled; currency costs create a meaningful spending sink that anchors the probe data marketplace. |
+| Probe factory removed | Probe manufacture moved to shipyard; probe factory facility deleted | Probe factory was redundant given shipyard already handles all unit production. Shipyard now gates both fighter and probe manufacture. Removes a facility slot that provided no strategic decision — players had to build both a shipyard and a probe factory to field any military and explore. The 20-population cost of the probe factory is absorbed into the shipyard (already 40 population). |
 | Holding fleet attrition | `max(1, round(unit_count × 0.01))` losses per tick | 1% attrition with minimum 1 unit/tick. Replaces the zero-cost lurking mechanic. Fleet deleted at 0 with events logged. Monitor rate during beta. |
 | Fleet fuel upkeep | 1 fuel/tick per fighter not docked on own territory | "Docked" = stationed on a territory owned by that nation. All other fleet statuses and stationed fleets on foreign/unclaimed territory pay upkeep. Creates ongoing fuel drain for sustained military projection. |
 | Power metrics | Military strength (1 per fighter) + industrial strength (mine=1, refinery=1, shipyard=2) | Computed at query time, not stored. Visible to all on nation profiles; visible to self on home page. Provides a competitive reference frame and a rough matchmaking signal. |
 | Friends system | Separate from diplomacy; friend_pending blocks planet dispatch | Friend requests use the diplomacy table (status: friend_pending/friendly). A nation in friend_pending or friendly status cannot have fleets dispatched to their planets, treating them like neutral for combat purposes. |
-| Dissent system | Per-territory integer 0–100; rises from war and enemy fleet presence; decays over time; penalizes production and population growth | Sources: +2/tick (at war, all territories), +5 (holding fleet), +8 (engaged fleet), +10 (actively drained), instant set to 60 (conquest). Decay: −3/tick (peace), −1/tick (war, no occupation), 0 (occupied). Production multiplier at 5 thresholds (1.00 → 0.30). Growth suppression at 40+ and zeroed at 60+. Settlement Hub facility (+2 decay/tick, one per territory). Attacker-side dissent deferred to post-beta. Does not rise during vacation mode. |
+| Dissent system | Per-territory integer 0–100; aggressor/defender asymmetry; fleet-presence penalties; Propaganda Office resistance; continuous production penalty curve | Sources: aggressor +3/tick all territories, defender +2/tick all territories, holding fleet +6, engaged fleet +10, instant set to 60 on conquest. Decay: −3 peace, −2 war (no occupation), 0 occupied. Propaganda Office: +2 decay normally, +3 under occupation. Production modifier: `max(0, 1 − t^1.71)` where `t = max(0, (d−25)/75)` — 50% loss at d=75, complete at d=100. Population growth suppression deferred. Notification events at thresholds 25/50/75/100. `declared_by` field on diplomacy row records aggressor. Does not rise during vacation mode. |
 | Population consumption at fighter manufacture | Deducted from territory `current` population only; the richness-based cap (`50 × (mineral_richness + fuel_richness)`) is never modified | Population regrows naturally each tick toward the cap. Fighter deaths do not restore population — pop spent at manufacture is permanently gone if the unit is destroyed in combat. This resolves the open question "does population die permanently?" — yes, at the point of manufacture, but the territory's growth capacity is unaffected so the nation recovers over time. |
 | Territory logistics upkeep | Quadratic fuel cost on territory count: `k × N(N+1)/2` fuel/tick, k=1 at beta start | Chosen to make empire growth logarithmic rather than linear: fuel income scales as N but logistics cost scales as N², creating a natural soft cap on expansion. The Nth territory costs N×k fuel/tick marginal cost. At k=1 a 20-territory empire pays 210 fuel/tick in logistics alone. k is stored as `LOGISTICS_FUEL_K` in constants.py and should be tuned during beta based on observed expansion rates. Do not change k without reviewing fuel production rates (5–10 fuel/tick per refinery on normal territories). |
+| Territory count currency upkeep | Superlinear currency cost: `k × N²` per tick, k=10 at beta start | Marginal cost of the Nth territory = k(2N−1). Optimal expansion stops at N* ≈ I/(2k) where I = currency income per territory. At k=10: rim player (I≈150) optimal N*≈7, medium (I≈300) N*≈15, dense core (I≈600) N*≈30. Rewards deep development (higher I per territory → larger profitable empire) over pure sprawl. Creates the intended progression: develop territories to unlock the right to hold more of them. k stored as `TERRITORY_UPKEEP_K` in constants.py. See Open Questions for rim-player monitoring note. |
 | Peace mechanic | Bilateral only — wars end exclusively through a mutually confirmed peace trade | Unilateral peace removed. Peace can be packaged with resource payments and territory transfers in the trade window, allowing structured negotiated settlements (reparations, cessions, white peace). The 24h minimum war duration does not apply to bilateral peace agreements. |
 | Facility caps | Population is the only cap — stacking one facility type at the expense of others is a valid strategic choice; balance via population costs rather than hard slot limits. | |
-| Combat damage model | Shields as flat damage reduction; `net_damage = max(0, firing × ATK − target × Shields)`; `losses = max(1, round(net / Structural_Integrity)) if net > 0 else 0` | Both sides fire simultaneously. Unit stat names: ATK, Shields, Structural_Integrity (formerly ATK, DEF, HP). DEF was dead code; renamed to Shields and wired into formula. A well-shielded fleet fully absorbs weak attacks. |
+| Combat damage model | Shields as flat damage reduction; `net_damage = max(0, firing × FP − target × Shields)`; `losses = max(1, round(net / Structural_Integrity)) if net > 0 else 0` | Both sides fire simultaneously. Unit stat names: FP, Shields, Structural_Integrity (formerly FP, DEF, HP). DEF was dead code; renamed to Shields and wired into formula. A well-shielded fleet fully absorbs weak attacks. |
 | Probe visibility scope | Probe_data (richness) recorded only at the destination; all other tiles on the probe's path record probe_visibility (existence only) | Removes the radius-2 scanning behaviour that gave players richness data for tiles surrounding every step. The probe is a targeted instrument, not a scanner. Path tiles appear on the map as "tile exists" without stats. |
 | Fleet dispatch default | Dispatch defaults to the full stationed fleet; entering fewer units splits the fleet, leaving the remainder stationed | The MapView quantity input defaults to max; shows "splits fleet" label and remaining-behind count when the user reduces it. Arriving fleets auto-merge into any existing stationed fleet at the destination. |
 
@@ -387,7 +412,17 @@ Developer thoughts: Dissent should be raised for a planet when it specifically i
 
 ### Best Practice Violations
 
+**The `holding` fleet status conflates two distinct situations with incompatible mechanics.** A fleet enters `holding` when its confirmation window expires with `standing_order = "hold"`, and also when an `engaged` fleet's enemy territory becomes unowned or changes to a non-war state. Holding attrition (1%/tick) applies in all cases. This means a player who uses the default standing order after a ceasefire — or whose target territory changes hands mid-war — is silently paying 1%/tick with no contextual UI hint. The event log fires `holding_fleet_attrition` each tick but the Military page only shows "Recall" as the available action, giving no indication of why the fleet is holding or how fast it is decaying. OGame's fleet save culture produces exactly this failure mode: players who don't understand the system silently lose units while offline. Fix: surface attrition rate and projected time-to-zero in the Active Operations UI, and split `holding` into `holding_enemy` (attrition applies) and `holding_own_space` (no attrition) if staging on own space ever becomes a use case.
 
+**~~Colony ship reachability is not enforced at the endpoint level.~~** *(Fixed — `send_colony_ship` now runs `compute_reachable_ids` before dispatch, identical to fleet dispatch.)*
+
+**~~Population deduction for fighter manufacture draws from all territories in descending-population order, not from the shipyard territory.~~** *(Fixed — manufacture now deducts from the shipyard territory's population only, and fails if that territory has insufficient unassigned population.)*
+
+**Specified:** Fighter manufacture consumes population from the territory on which the shipyard is built. The quantity produced is limited by that territory's unassigned population (territory current population minus population assigned to facilities at that territory). Population is permanently consumed — fighter deaths do not restore it.
+
+**~~The `conquer_territory` endpoint deletes all probe data for the captured territory but does not delete probe visibility entries.~~** *(Fixed — `ProbeVisibility` rows are now deleted alongside `ProbeData` and `ProbeDataAccess` on conquest.)*
+
+**War declaration allows fleets already in transit to proceed unimpeded through the 2-tick grace period.** When a war is declared, a `war_pending` row is created and hostilities begin 4 hours later. However, fleets dispatched before declaration (in status `in_transit`) continue to travel during the grace period and will arrive at the enemy territory the moment `war` becomes active, potentially before the defender has received a tick notification. The spec says the grace period exists so defenders can "see the war declared notification and prepare" — a fleet that departs the same tick war is declared can arrive the same tick war becomes active, negating the grace period entirely for short distances. This is the open question about "defender repositioning during war declaration window" from the Open Questions section and is flagged there, but the code has no guard against it.
 
 ---
 
@@ -395,27 +430,27 @@ Developer thoughts: Dissent should be raised for a planet when it specifically i
 
 **No new player starting tutorial or guided first actions.** Veteran players testing a closed beta will orient themselves, but the starting state (100 minerals, 100 fuel, 2000¤, 100 pop, one territory) gives no in-game signal about what to build first. OGame and Ikariam both have guided first-action queues. Without this, early beta feedback will include confusion about the correct opening sequence (mine → shipyard → fighters vs. mine → probe factory → exploration), which is actually a meaningful strategic choice the game should surface, not obscure.
 
-**No way to split or merge stationed fleets.** A player with a stationed fleet of 200 fighters at one territory cannot split 50 to send somewhere while leaving 150. The `send_fleet` endpoint takes a `quantity` from the stationed fleet and creates a new in-transit fleet, which handles the split case. However, there is no endpoint to merge two stationed fleets at the same territory into one. If a player sends fighters to a territory in multiple waves, they accumulate as one stationed fleet (the arrival logic merges them), but this is not visible to the player as intentional behavior. CyberNations and P&W both have explicit fleet management UIs. Confirm whether the merge-on-arrival behavior is surfaced in the UI.
+**~~No territory-level resource production breakdown accessible from the Military or Planets pages.~~** *(Partially fixed — the Planets page expanded panel now shows a Production / Tick section with per-territory gains (minerals, fuel, territory income) and costs (fighter upkeep), sourced from the existing `GET /api/nations/mine/territories/yields` endpoint. The Military page still does not show a per-territory breakdown of which territories are funding fleet upkeep; that cross-reference remains absent.)*
 
-**No territory-level resource production breakdown.** The event log shows nation-level resource deltas per tick, but there is no endpoint that shows per-territory or per-facility production. Players cannot audit which territories are contributing what. CyberNations had a detailed income calculator; P&W shows per-city breakdowns. Without this, players cannot make informed decisions about where to build facilities or which territories to prioritize.
+**~~No combat log accessible to third parties.~~** *(Fixed — `GET /api/nations/{nation_id}/wars` lists all wars for any nation (requires login), and `GET /api/nations/{nation_id}/wars/{opponent_id}/log` returns the full `combat_round` and `resources_drained_by_occupation` event history between any two nations, enriched with territory names. The public nation profile page now shows a "War History" section with a dropdown of past wars and "View Log →" links to a dedicated combat log page at `/nations/:id/wars/:opponentId`.)*
 
-**No combat log accessible to third parties.** The events table records `combat_round` events, but the current `GET /log` view shows only events for the authenticated nation. In CyberNations and P&W, war histories are publicly visible — this is a social and diplomatic mechanic, not just a transparency feature. Veteran players will expect to be able to view another nation's recent combat history to assess their military activity.
+**No player-facing dissent UI.** The dissent system is fully specified and impacts production and population growth, but it is not yet implemented. When it does land, there is no existing UI surface for players to see their territories' current dissent levels, threshold-crossing notifications, or the effectiveness of Propaganda Offices. The event log threshold-crossing events (specified: log at 20, 40, 60, 80) need a dedicated display, and the territory detail view needs a dissent field. Plan this alongside dissent implementation, not after.
+
+**No public probe data marketplace.** The direct-trade probe data transfer is implemented. The public storefront — where any nation can browse listed probe data, see richness and reachability without coordinates, and purchase at a seller-set price — is listed as remaining Phase 5 work. This is the primary mechanic enabling the exploration archetype as a standalone economy. Until it exists, explorer-type players can only transact via bilateral DMs, which requires social connection outside the game.
 
 ---
 
 ### Balance Issues
 
-**Probe cost is prohibitive at game start and the bootstrap problem is real.** A probe costs 10,000¤. Starting currency is 2,000¤. Territory income is 500¤/tick with at least one active facility. A new player needs 20 ticks (40 hours) of income to afford a single probe — and that assumes they spend nothing on facilities or fighters during that time. The probe factory itself costs 30 min + 15 fuel (cheap) but requires 20 assigned population, and the probe costs an additional 1,000 minerals and 500 fuel on top. The exploration archetype described as a legitimate path is mechanically inaccessible for roughly 2–3 real days after game start. Consider a starter probe allocation (1 probe in reserve at nation creation) or reducing the currency component for the first probe only.
+**Currency income is linear with territory count but fighter upkeep is linear with fighter count, creating a perverse incentive.** 500¤/tick per active territory, 2¤/tick per fighter. A 5-territory nation earns 2,500¤/tick and can sustain 1,250 fighters on currency alone before considering other costs. The logistics fuel cost (quadratic with territory count) constrains expansion via fuel, but currency has no equivalent brake. Infrastructure maintenance costs are post-beta — without them, large empires accumulate currency faster than small ones with no counterbalancing pressure. This means the dominant first-mover advantage is to colonize as many territories as possible early to build a currency surplus that sustains a fighter force small nations cannot match.
 
-**Currency income is linear with territory count but fighter upkeep is linear with fighter count, creating a perverse incentive.** 500¤/tick per active territory, 2¤/tick per fighter. A 5-territory nation earns 2,500¤/tick and can sustain 1,250 fighters on currency alone before considering other costs. There is no scaling cost for holding many territories (facility caps are a known missing feature). This means the dominant strategy is: colonize as many territories as possible as fast as possible to maximize currency income, then use that income to sustain a massive fighter force. The design intent (rim is viable, don't monopolize the core) is undercut by income that scales faster than any meaningful constraint. Infrastructure maintenance costs are post-beta — but without them, large empires accumulate currency faster than small ones with no counterbalancing pressure.
+**Combat loss formula produces near-symmetrical attrition, making offensive war too costly.** With FP 2, Shields 1, SI 5, both attacker and defender lose `max(1, round((opponent × 2 - self × 1) / 5))` per tick when forces are roughly equal. Equal-sized forces annihilate each other in roughly 2–3 ticks. An attacker who travels several ticks to reach an enemy territory then fights to mutual destruction gains nothing — the territory is conquered with a badly depleted force that then immediately starts paying holding attrition. CyberNations used a ~3:1 attacker-to-defender ratio requirement to overcome ground defenses; P&W's resistance system means defenders absorb attacks without losing units until resistance hits zero. The current symmetric formula means conquest is only viable with overwhelming numerical superiority. The dissent system (when implemented) will add production pressure on both sides but does not change the fundamental combat exchange rate. A home-territory multiplier (e.g., defender effective count × 1.5) would make defense meaningful without changing the formula or unit stats.
 
-**Combat loss formula produces near-symmetrical attrition, making offensive war too costly.** With ATK 2 and HP 5, both attacker and defender lose `round(opponent_count × 0.4)` per tick. Equal-sized forces annihilate each other in about 2.5 ticks. An attacker who travels several ticks to reach an enemy territory then fights to mutual destruction gains nothing — the territory is conquered with a badly depleted force that then faces holding attrition. In CyberNations, the attacker/defender ratio was ~3:1 to overcome defenses (ground attack vs. defending soldiers). P&W builds in a resistance system where the defender does not lose forces until resistance reaches zero. The current symmetric formula means conquest is only viable with overwhelming numerical superiority, which requires large currency/fuel investment to manufacture. Consider giving the defender a meaningful advantage (e.g., defenders fight at 1.5× effectiveness when stationed on their own territory) or differentiate the DEF stat before the dissent system goes on top of an already attacker-unfavorable combat model.
+**Holding fleet attrition applies equally regardless of which territory the fleet is holding at.** `holding` status applies both to fleets whose confirmation window expired at an enemy planet and to fleets that transition from `engaged` when a territory becomes uncontested. Attrition is 1%/tick in both cases. The spec says the default standing order is `hold` — a player who forgets to set `recall` loses 1%/tick silently until they check the event log. A 200-fighter fleet in holding at a friendly border (e.g., post-ceasefire, awaiting recall order) loses 2 fighters per tick, ~72 fighters in the 36 ticks of a weekend absence. The mechanic is correct for genuine occupation scenarios; it is punishing for fleets caught in limbo during war resolution. Consider only applying attrition to fleets holding on enemy-owned territory, not to fleets holding on unclaimed or formerly-enemy territory after ownership changes.
 
-**Holding fleet attrition applies even when a fleet is deliberately holding near friendly space.** The `holding` status applies both to fleets that expired their confirmation window at an enemy territory AND to any fleet that transitions from `pending_confirmation` on expiry with `standing_order = "hold"`. This means a player who intentionally sets standing order to "hold" (the default) to keep their fleet at an enemy border loses 1%/tick automatically. The attrition mechanic is correct for occupation/loitering scenarios but punishes players who use `hold` as a staging posture. The spec says the default standing order is `hold` — this means a player who forgets to set `recall` will silently watch their fleet erode at 1%/tick with no visible warning until the event log is checked. Consider a separate `staging` status or only applying attrition to fleets holding on enemy-owned territory.
+**~~Resource drain targets nation stockpile at a flat 5% regardless of attacker fleet size.~~** *(Fixed — drain is now bounded by the occupied territory's actual per-tick production. The occupier intercepts what the planet generates rather than raiding the national stockpile. A territory with no active facilities produces nothing to drain. See Open Questions for fraction and fleet-size scaling decisions.)*
 
-**Resource drain targets nation stockpile, not territory.** The soft damage model drains 5% of the defender's total national mineral and fuel reserves per tick, regardless of how many territories are occupied or how large the nation is. A 10-territory nation with 50,000 minerals loses 2,500/tick from one occupied territory; a 1-territory nation with 500 minerals loses 25/tick. The drain is proportional to wealth, which means large nations are disproportionately affected per occupied territory. More importantly, the drain does not scale with the size of the attacking fleet — one fighter in occupation drains the same 5% as 500 fighters. This is not a soft damage model; it is a full-empire economic attack from a single unit. A more coherent implementation would drain a fixed amount per tick based on attacker fleet size or territory richness, rather than a percentage of total national wealth.
-
-**Demolish refund is 25% of mineral/fuel cost but does not refund currency.** The `DEMOLISH_REFUND_FRACTION` applies to minerals and fuel only. A shipyard costs 2,000¤ to build and returns 0¤ on demolition. For facilities with significant currency costs (mine: 500¤, shipyard: 2,000¤), the player permanently loses all currency investment on demolition. In Ikariam and OGame, demolition returns a meaningful fraction of all resources. The current implementation will cause players to avoid demolition entirely (a strategic rigidity that worsens the facility-stacking problem already flagged in Known Open Issues) and creates a negative experience when players need to reorganize their infrastructure.
+**~~Demolish refund is 25% of mineral/fuel cost but does not refund currency.~~** *(Fixed — `tick.py` applies `DEMOLISH_REFUND_FRACTION` to all three resource components including currency. Mine demolish returns 125¤, refinery 125¤, shipyard 500¤.)*
 
 ---
 
@@ -428,6 +463,151 @@ Developer thoughts: Dissent should be raised for a planet when it specifically i
 | `SECRET_KEY` | `CaoTU4MqP5BVyuXc6ktbjEL7dG1pZ9RDAgWfKIHln3mYsxeO` |
 
 These are written to `.env` (git-ignored). To rotate: update `.env` and restart the stack. Rotating `SECRET_KEY` invalidates all existing sessions.
+
+---
+
+## Tutorial Planning
+
+*Added 2026-06-01. Covers the first-session guided experience for closed beta players. The audience is veteran nation-sim players — they understand the genre. The tutorial's job is to surface this game's specific mechanics and ordering decisions, not to teach genre basics.*
+
+---
+
+### Learning Objectives
+
+By the end of the tutorial sequence, a player should:
+
+1. Know that population is a hard constraint on construction, not just a number to grow
+2. Have a functioning production loop: minerals in, fuel in, currency accumulating
+3. Understand that the shipyard gates all military and exploration actions
+4. Have built at least one combat unit and understand its ongoing currency and fuel upkeep costs
+5. Have dispatched and received a probe, and understand what probe data does and does not reveal (destination richness only — not path tile richness)
+6. Have sent a colony ship to a scouted planet
+7. Know that fleet dispatch to an owned territory claims it instantly; colony ship populates it
+8. Have read the event log at least once and understand what it tracks
+
+---
+
+### Timing Baseline
+
+Before designing gates, the real-time cost of each step must be understood. Assumptions: starting resources 100 min / 100 fuel / 2000¤ / 100 pop, rim home planet.
+
+| Step | Resource cost | Build time | Notes |
+|---|---|---|---|
+| Mine | 60 min + 30 fuel + 500¤ + 10 pop | 1 tick (2h) | Can be queued immediately on game start |
+| Refinery | 30 min + 60 fuel + 500¤ + 10 pop | 1 tick (2h) | Can be queued same session as mine if resources permit; needs 10 min + 10 fuel margin after mine |
+| Shipyard | 150 min + 60 fuel + 2000¤ + 40 pop | 2 ticks (4h) | Currency bottleneck: mine+refinery together produce 60¤/tick, so ~17 ticks (~34h) needed from a 1000¤ balance after mine+refinery complete |
+| Fighter | 15 min + 30 fuel + 1000¤ + 1 pop | Instant (manufactured) | 2¤/tick currency upkeep + 1 fuel/tick if not docked on own territory |
+| Probe | 1000 min + 500 fuel + 10000¤ | Instant (manufactured) | Very expensive — intended as a later-game action; stockpiling is required |
+| Colony ship | 500 min + 1000 fuel | Instant (manufactured) | No currency cost; no pop cost at build |
+
+**The shipyard is the real first gate.** The currency gap (~34 hours from a typical starting position) is the dominant wait. Mine+refinery produce resources but currency drains from territory upkeep (`k × N²`), which at k=10 and N=1 is 10¤/tick — not enough to offset the 60¤/tick income from mine+refinery, so the net is +50¤/tick. From a 1000¤ starting balance after mine+refinery: need 1000 more¤ at +50¤/tick = 20 ticks = 40 hours. A new player who completes the first two buildings in their opening session and logs out will have the shipyard available on their second or third visit the next day. This is acceptable pacing for the genre.
+
+**Probe is intentionally a late-game gate.** At 10000¤ cost and 50¤/tick net income from a one-planet economy, a new player needs ~200 ticks (~400 hours) of income just for a single probe if they save every¤. This is wrong for a tutorial. Probes are not a new-player mechanic — the map already has terrain generated by seeding, so players can expand into pre-seeded territory using fleets (which claim unclaimed territory on arrival) without needing probes. The tutorial should deprioritize probes relative to the proposed flow. See recommendation below.
+
+---
+
+### The 90% Population Utilization Gate: Do Not Use
+
+The proposed trigger — "once planet reaches 90% population utilization, create a probe" — has two fatal problems:
+
+**Problem 1: The gate may be impossible to hit on a richness-1 home planet.** Pop cap = 50 × (mineral_richness + fuel_richness). A planet with richness 1+1 has a cap of 100, and the player starts with exactly 100 pop — already at cap. Growth rate is 1%/tick of current population, capped. No growth ever occurs. Assigned pop after mine + refinery + shipyard = 10 + 10 + 40 = 60 pop = 60% utilization. Reaching 90% requires 30 more pop in facilities (3 more mines/refineries/propaganda offices), but the population never grows to enable that — it is already at cap. The gate is never triggered.
+
+**Problem 2: Even on a higher-richness planet, the time required is prohibitive.** On a 2+2 planet (cap 200), population grows from 100 at 1%/tick. To reach 180 pop (90% of 200) takes ~59 ticks (~118 hours, roughly 5 days), assuming facilities keep pace with population. For a tutorial prompt, five days of real time before the colonization step is not a delay — it is abandonment.
+
+**Recommendation: replace this gate entirely.** Use a shipyard completion event as the trigger for the fighter and probe/colonization steps. The tutorial prompt fires when the first shipyard completes, not when a population threshold is met.
+
+---
+
+### Recommended Tutorial Flow
+
+The tutorial is a sequence of tooltip prompts tied to game state, not a forced linear path. Prompts appear when conditions are met; the player can skip or dismiss. Steps are numbered to show the expected ordering.
+
+**Step 1 — Build a mine** (triggers on: game start / nation creation)
+
+Prompt: "Your home planet generates minerals passively each tick. Build a mine to extract them. Minerals are your primary construction resource." Show cost, pop requirement, build time. Teach: resource deduction is immediate; facility takes 1 tick to activate.
+
+**Step 2 — Build a refinery** (triggers on: mine under construction or active)
+
+Prompt: "Refineries extract fuel — required for fleet movement, probes, and colony ships. Build one now while the mine completes." Teach: parallel construction is intentional; fuel is distinct from minerals; both are needed before any fleet can move far.
+
+**Step 3 — Understand currency income** (triggers on: first mine or refinery becomes active)
+
+Prompt: "Your active mine now generates currency income each tick (30¤/tick per active mine or refinery). Currency pays for shipyards, fighters, and probes. Your territory also costs currency each tick — more territories means more upkeep." Teach: the territory upkeep formula exists; development depth (more facilities per planet) is better than territory sprawl early on.
+
+**Step 4 — Build a shipyard** (triggers on: at least one mine and one refinery active, sufficient resources)
+
+Prompt: "The shipyard is required to build fighters, colony ships, and probes. It costs 2000¤ and takes 2 ticks to complete. Begin construction when you have the resources — income from your mine and refinery will get you there." Teach: the shipyard is the progression gate; 2-tick build time means planning ahead; the player should understand they are waiting for income, not doing something wrong.
+
+**Step 5 — Manufacture a fighter** (triggers on: shipyard becomes active)
+
+Prompt: "Your shipyard is ready. Manufacture a fighter — your first military unit. Fighters have an ongoing currency upkeep cost of 2¤/tick and 1 fuel/tick when deployed away from home. A small standing garrison protects against opportunistic claims. Check the Military page to deploy it." Teach: upkeep exists and is ongoing; a single fighter stationed at home is cheap insurance; the Military page is where fleet management lives; fighters have stats (FP, Shields, SI) that matter in combat.
+
+**Step 6 — Review the event log** (triggers on: fighter manufactured)
+
+Prompt: "Open the Log page. Every tick generates entries: resource production, population changes, fleet status, and construction completions. This is your primary tool for understanding what happened while you were offline." Teach: the game is asynchronous; players should check the log after returning; teach what each entry type means.
+
+**Step 7 — Understand the map and fleet dispatch** (triggers on: at least one fighter stationed)
+
+Prompt: "From the Map, you can dispatch your fleet to any reachable unclaimed planet. Fleets travel at 2 nodes per tick. Dispatching to an unclaimed planet claims it on arrival. Void tiles are impassable walls — plan a valid path. Dispatching to an enemy planet enters a 4-hour confirmation window before combat can occur." Teach: map fog-of-war basics; fleet pathfinding rules; the confirmation window and standing orders (hold/recall); that claiming is separate from colonizing.
+
+**Step 8 — Scout with a probe** (triggers on: first claimed territory that is not home, OR first colonized second territory)
+
+Prompt: "Probes are expensive instruments for discovering new space. Your probe range is 10 nodes from your nearest colony. Dispatching a probe reveals destination richness — but only at the destination, not along the path. Probe data can be sold to other players. Build a probe at your shipyard when resources allow." Teach: probe cost; range limitation; data is destination-only; the information economy exists; probes can be recalled; probe data is non-exclusive on sale.
+
+**Step 9 — Build and send a colony ship** (triggers on: have at least 1 claimed territory with known richness, have 100+ unassigned pop, have a shipyard)
+
+Prompt: "Claimed territory is owned but empty — no facilities can be built until population arrives. A colony ship loads up to 100 population from any colonized planet you own and carries it to a claimed planet. Build one at your shipyard. Colony ships travel 1 node per tick — slower than fighters." Teach: the two-step claim/colonize distinction; colony ship load/unload mechanics; slower speed than fighters; requires 100 unassigned pop at the source planet.
+
+**Step 10 — Tutorial complete** (triggers on: second planet colonized)
+
+Prompt: "You have a functioning multi-planet empire. The rest of the game is yours — expand, develop, trade, or pick a fight. Check the Diplomacy page to see who your neighbors are. Use the event log and the nation profiles page to track the competitive landscape." Point to remaining game systems without prescribing a path.
+
+---
+
+### What the Proposed Flow Got Right and Wrong
+
+**Good:** Mine before refinery before shipyard is the correct ordering. Both resources are needed before the shipyard can be queued.
+
+**Problem — fighter before colonization:** In the proposed flow, building a fighter comes before probing and colonization. This creates the impression that combat is the next step after infrastructure, when in fact the correct early-game behavior for most players is to develop the home planet and colonize a second territory before worrying about military. The fighter should be introduced as part of "defense basics" in the same step as shipyard completion, not as a standalone step before exploration. The revised flow above integrates it at step 5 without making it a blocker for the colonization path.
+
+**Problem — probe before colony ship:** In the proposed flow, probing happens before the colony ship step. This ordering is backwards for tutorial purposes. Probing discovers new space, but a new player's second planet does not need to be probed — the seeded map already has nearby territory. Claiming with a fleet and colonizing with a colony ship should be taught first; probing is introduced second as the tool for discovering territory beyond the pre-seeded zone.
+
+**Problem — 90% pop gate:** Already addressed above. Do not use.
+
+**Missing — currency and upkeep:** The proposed flow does not teach currency mechanics or upkeep at all. Currency is the primary timer on early progression (shipyard wait) and the primary ongoing cost of empire (fighter upkeep, territory upkeep). A player who doesn't understand these will not understand why they are losing currency each tick or why adding territory is eventually self-limiting. Step 3 (currency income prompt) and step 5 (fighter upkeep prompt) cover this.
+
+**Missing — event log:** The proposed flow has no step that directs players to the log. For an asynchronous game, the log is the primary UI for catching up after being offline. This is critical to teach before the player has their first war or combat event.
+
+**Missing — confirmation window:** The 4-hour confirmation window and standing orders (hold/recall) are non-obvious genre departures that must be explained before a player's first fleet dispatch to potentially hostile space. Step 7 covers this in the map/fleet-dispatch tutorial prompt.
+
+---
+
+### Gating Logic Summary
+
+| Tutorial step | Gate condition | Real-time estimate |
+|---|---|---|
+| Build mine | Nation created | Day 1, first session |
+| Build refinery | Mine queued or active | Day 1, first session |
+| Understand currency | First mine or refinery active | Day 1, 2h in |
+| Build shipyard | Mine + refinery active | Day 1–2 (currency accumulation, ~40h) |
+| Manufacture fighter | Shipyard active | Day 2 or 3 |
+| Read event log | Fighter manufactured | Day 2 or 3 |
+| Fleet dispatch / map | Fighter stationed | Day 2 or 3 |
+| Send probe | First claimed second territory | Day 3–5 |
+| Colony ship | Claimed territory + 100 pop available | Day 3–5 |
+| Tutorial complete | Second territory colonized | Day 3–5 |
+
+The ~40-hour currency wait for the shipyard is the main patience test. For the beta audience of veteran nation-sim players, this is in line with OGame's early mine→metal storage→shipyard cadence. It may need shortening for a general audience. Consider raising starting currency to 5000¤ to shorten this to ~20h if beta feedback identifies it as a dropout point.
+
+---
+
+### Open Questions for Tutorial Design
+
+- **Prompt format:** In-game tooltip overlay, sidebar task list, or email/notification inbox? Sidebar task list (like OGame's "Advisor" or Ikariam's first-session task list) fits the async nature better than overlays. Overlays require the player to be online at the trigger moment; a task list persists. Decide before implementation.
+- **Skip/dismiss:** Can veteran players dismiss the tutorial entirely at nation creation? Recommended: yes, with an option to re-enable from settings. The beta audience will want this.
+- **Starting currency:** Current 2000¤ start produces a ~40h wait for the shipyard at +50¤/tick net income. This may be acceptable for veterans but will be a dropout point for general players. Consider raising to 4000–5000¤ before beta launch. Monitor first-session completion rates.
+- **Home planet richness assignment:** The tutorial timing analysis assumes the home planet can have a pop cap above the starting 100 pop. If players pick a richness-1+1 planet (cap exactly 100), population never grows, and any growth-based tutorial gate fails. Either enforce a minimum home planet richness (e.g., mineral_richness + fuel_richness >= 4) at nation creation, or ensure no tutorial step uses population growth as a gate. The revised flow above avoids growth-based gates entirely, but the minimum richness question should be decided regardless for game balance reasons.
+- **Probe tutorial timing:** Probes cost 10000¤ and 1000 min + 500 fuel. A single-planet economy running mine + refinery generates ~50¤/tick net and 5 min + 5 fuel/tick. Reaching probe cost from tutorial-complete state takes approximately 200 ticks for currency alone. This is by design (probes are a later-game tool), but the tutorial should set this expectation explicitly rather than implying probes are a near-term goal. The step 8 prompt as written does this.
 
 Fix 1 — DEF as 1.5× garrison multiplier: don't implement as described
 The intent is right but the hook is wrong. Wiring the DEF stat now creates two overlapping sources of the same effect once stationary defenses arrive — you'd have to untangle them later. Instead, implement the home-territory advantage as a separate explicit multiplier on the defender's effective count (defender_effective = count × 1.5 if on own territory). This achieves the same balance result today, stays structurally separate from whatever DEF eventually does, and stationary defenses can be added independently without interference. Leave DEF=1 in the constants as a stub signaling that differentiation is coming.
