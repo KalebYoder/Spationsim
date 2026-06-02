@@ -564,7 +564,7 @@ Prompt: "Claimed territory is owned but empty — no facilities can be built unt
 
 **Step 9 — Scout with a probe** (triggers on: colony ship manufactured)
 
-Prompt: "Probes are expensive instruments for discovering new space. Your probe range is 10 nodes from your nearest colony. Dispatching a probe reveals destination richness — but only at the destination, not along the path. Probe data can be sold to other players. Build a probe at your shipyard when resources allow." Teach: probe cost; range limitation; data is destination-only; the information economy exists; probes can be recalled; probe data is non-exclusive on sale.
+Prompt: "When nearby space is claimed or too contested to expand into safely, probes let you scout further out. A probe reveals the resource richness of its destination — giving you intelligence before you commit a colony ship. Probe range is 10 nodes from your nearest colony. Data is destination-only (not along the path) and can be sold to other players. Build a probe at your shipyard when resources allow." Teach: probes are a tool for finding expansion opportunities beyond the contested frontier, not a prerequisite for all colonization; probe cost; range limitation; data is destination-only; the information economy exists; probe data is non-exclusive on sale.
 
 **Step 10 — Tutorial complete** (triggers on: second planet colonized)
 
@@ -604,8 +604,6 @@ Prompt: "You have a functioning multi-planet empire. The rest of the game is you
 | Colony ship | Claimed territory + 100 pop available | Day 3–5 |
 | Send probe | Colony ship manufactured | Day 3–5 |
 | Tutorial complete | Second territory colonized | Day 3–5 |
-
-The ~40-hour currency wait for the shipyard is the main patience test. For the beta audience of veteran nation-sim players, this is in line with OGame's early mine→metal storage→shipyard cadence. It may need shortening for a general audience. Consider raising starting currency to 5000¤ to shorten this to ~20h if beta feedback identifies it as a dropout point.
 
 ---
 
