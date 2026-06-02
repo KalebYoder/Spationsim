@@ -20,7 +20,7 @@ from ..constants import (
 from ..models.tutorial import TutorialState
 from ..services.tutorial import should_complete_step, get_tutorial_reward, next_step as tutorial_next_step
 
-_IMMEDIATE_TUTORIAL_STEPS = {1, 2}
+_IMMEDIATE_TUTORIAL_STEPS = {1, 2, 4}
 
 router = APIRouter(prefix="/api/facilities", tags=["facilities"])
 

@@ -544,7 +544,7 @@ Reward: +100 minerals, +100 fuel, +500 currency — awarded immediately when the
 
 Prompt: "The shipyard is required to build fighters, colony ships, and probes. It costs 2000¤ and takes 2 ticks to complete. Begin construction when you have the resources — income from your mine and refinery will get you there." Teach: the shipyard is the progression gate; 2-tick build time means planning ahead; the player should understand they are waiting for income, not doing something wrong.
 
-Reward: +1000 currency (half the shipyard cost) — awarded at tick time when the shipyard completes, not on queue.
+Reward: +1000 currency (half the shipyard cost) — awarded immediately when the build is queued.
 
 **Step 5 — Manufacture a fighter** (triggers on: shipyard becomes active; completes on: fighter manufactured) **[implemented]**
 
@@ -609,7 +609,7 @@ Reward: +1000 minerals, +1000 fuel, +2000 currency — awarded immediately on se
 | Build mine (+500 min, +500¤) | Nation created | Day 1, first session |
 | Build refinery (+500 fuel, +500¤) | Mine queued or active | Day 1, first session |
 | Review planets (+100 min, +100 fuel, +500¤) | Mine or refinery active | Day 1, 2h in |
-| Build shipyard (+1000¤) | Mine + refinery active | Day 1–2 (~40h currency wait) |
+| Build shipyard (+1000¤) | Mine + refinery active | Day 1–2 (~40h currency wait, reward immediate on queue) |
 | Manufacture fighter (+1000¤) | Shipyard active | Day 2 or 3 |
 | Read event log (no reward) | Fighter manufactured | Day 2 or 3 |
 | Dispatch fleet (+500 min, +500 fuel) | Fighter stationed | Day 2 or 3 |
