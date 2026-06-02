@@ -11,15 +11,25 @@ from ..models.territory import Territory
 from ..models.resource_log import ResourceLog
 from ..models.event import Event
 from ..models.territory_population import TerritoryPopulation
+from ..models.territory_dissent import TerritoryDissent
+from ..models.tutorial import TutorialState
 from ..models.diplomacy import Diplomacy
+from ..services.tutorial import should_complete_step, get_tutorial_reward, next_step as tutorial_next_step
 from ..models.probe import Probe
 from ..models.probe_data import ProbeData
 from ..models.probe_visibility import ProbeVisibility
 from ..services.combat import resolve_combat_tick
 from ..services.logistics import compute_logistics_fuel_cost
+from ..services.territory_yield import compute_territory_yield
 from ..constants import (
     POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER, PROBE_VISION_RADIUS,
     UNIT_STATS, FACILITY_COSTS, DEMOLISH_REFUND_FRACTION, LOGISTICS_FUEL_K,
+    TERRITORY_UPKEEP_K,
+    DISSENT_CURVE_EXPONENT,
+    DISSENT_WAR_AGGRESSOR, DISSENT_WAR_DEFENDER,
+    DISSENT_FLEET_HOLDING, DISSENT_FLEET_ENGAGED, DISSENT_CONQUEST_RESET,
+    DISSENT_DECAY_PEACE, DISSENT_DECAY_WAR, DISSENT_DECAY_OCCUPIED,
+    DISSENT_OFFICE_BONUS_NORMAL, DISSENT_OFFICE_BONUS_OCCUPIED,
 )
 from ..map_gen import generate_territory
 
@@ -65,6 +75,15 @@ def _hex_dist(q1, r1, q2, r2):
     return max(abs(dq), abs(dr), abs(dq + dr))
 
 
+def _dissent_production_modifier(dissent: int) -> float:
+    """Continuous power-curve penalty: no effect below 25, 50% at 75, zero at 100."""
+    t = max(0.0, (dissent - 25) / 75.0)
+    return max(0.0, 1.0 - t ** DISSENT_CURVE_EXPONENT)
+
+
+_DISSENT_THRESHOLDS = (25, 50, 75, 100)
+
+
 def _next_step(cq, cr, dq, dr):
     neighbors = [(cq+1, cr), (cq-1, cr), (cq, cr+1), (cq, cr-1), (cq+1, cr-1), (cq-1, cr+1)]
     return min(neighbors, key=lambda nb: _hex_dist(nb[0], nb[1], dq, dr))
@@ -99,6 +118,20 @@ def run_tick():
 
         nations = db.query(Nation).all()
 
+        # Pre-load dissent values for all territories (used for production modifier this tick)
+        dissent_map: dict[int, int] = {
+            row.territory_id: row.dissent
+            for row in db.query(TerritoryDissent).all()
+        }
+
+        # Build war-role lookup: nation_id -> "aggressor" | "defender" | None
+        war_role: dict[int, str] = {}
+        for war_row in db.query(Diplomacy).filter(Diplomacy.status == "war").all():
+            for nid in (war_row.nation_a, war_row.nation_b):
+                if nid not in war_role:
+                    role = "aggressor" if war_row.declared_by == nid else "defender"
+                    war_role[nid] = role
+
         for nation in nations:
             territory_ids = [
                 t_id for (t_id,) in
@@ -106,7 +139,13 @@ def run_tick():
             ]
 
             facilities = (
-                db.query(Infrastructure.type, Territory.mineral_richness, Territory.fuel_richness, Territory.territory_type)
+                db.query(
+                    Infrastructure.type,
+                    Infrastructure.territory_id,
+                    Territory.mineral_richness,
+                    Territory.fuel_richness,
+                    Territory.territory_type,
+                )
                 .join(Territory, Infrastructure.territory_id == Territory.id)
                 .filter(Territory.nation_id == nation.id, Infrastructure.status == "active")
                 .all()
@@ -114,34 +153,24 @@ def run_tick():
 
             minerals_delta = 0
             fuel_delta = 0
-            for ftype, mineral_richness, fuel_richness, territory_type in facilities:
+            for ftype, t_id, mineral_richness, fuel_richness, territory_type in facilities:
+                modifier = _dissent_production_modifier(dissent_map.get(t_id, 0))
                 if ftype == "mine":
                     r = float(mineral_richness)
                     if territory_type == "anomaly":
-                        minerals_delta += round(r * 2 + 10)
+                        minerals_delta += round((r * 2 + 10) * modifier)
                     else:
-                        minerals_delta += max(5, round(r * 2))
+                        minerals_delta += round(max(5, round(r * 2)) * modifier)
                 elif ftype == "refinery":
                     r = float(fuel_richness)
                     if territory_type == "anomaly":
-                        fuel_delta += round(r * 2 + 10)
+                        fuel_delta += round((r * 2 + 10) * modifier)
                     else:
-                        fuel_delta += max(5, round(r * 2))
+                        fuel_delta += round(max(5, round(r * 2)) * modifier)
 
-            # 500 currency per colonized territory that has at least one active mine or refinery
-            income_territory_count = (
-                db.query(Territory.id)
-                .join(Infrastructure, Territory.id == Infrastructure.territory_id)
-                .filter(
-                    Territory.nation_id == nation.id,
-                    Territory.is_colonized == True,
-                    Infrastructure.type.in_(["mine", "refinery"]),
-                    Infrastructure.status == "active",
-                )
-                .distinct()
-                .count()
-            )
-            currency_delta = 500 * income_territory_count
+            # 30 currency per active mine or refinery
+            income_facility_count = sum(1 for ftype, *_ in facilities if ftype in ("mine", "refinery"))
+            currency_delta = 30 * income_facility_count
 
             # Currency upkeep: 2 currency per fighter per tick (all fleets regardless of status)
             fighter_upkeep = (
@@ -150,6 +179,11 @@ def run_tick():
                 .scalar()
             )
             currency_delta -= fighter_upkeep * 2
+
+            # Territory count upkeep: k × N² per tick, where N = territories owned.
+            # Creates superlinear expansion cost so large empires can't accumulate
+            # currency faster than small ones indefinitely.
+            currency_delta -= TERRITORY_UPKEEP_K * len(territory_ids) ** 2
 
             # Fuel upkeep: 1 fuel per fighter not docked on own territory.
             # "Docked" = stationed on a territory owned by this nation.
@@ -230,6 +264,36 @@ def run_tick():
                 processed_at=tick_at,
                 status="processed",
             ))
+            territory_obj = db.get(Territory, infra.territory_id)
+            if territory_obj and territory_obj.nation_id:
+                tutorial = db.query(TutorialState).filter(
+                    TutorialState.nation_id == territory_obj.nation_id,
+                    TutorialState.dismissed == False,
+                ).first()
+                if tutorial and should_complete_step(tutorial.current_step, infra.type):
+                    reward = get_tutorial_reward(tutorial.current_step)
+                    nation_obj = db.get(Nation, territory_obj.nation_id)
+                    if nation_obj:
+                        nation_obj.minerals += reward["minerals"]
+                        nation_obj.fuel += reward["fuel"]
+                        nation_obj.currency += reward["currency"]
+                    completed_step = tutorial.current_step
+                    setattr(tutorial, f"step{completed_step}_completed_at", tick_at)
+                    tutorial.current_step = tutorial_next_step(tutorial.current_step)
+                    db.add(Event(
+                        type="tutorial_step_complete",
+                        payload={
+                            "step": completed_step,
+                            "nation_id": territory_obj.nation_id,
+                            "reward_minerals": reward["minerals"],
+                            "reward_fuel": reward["fuel"],
+                            "reward_currency": reward["currency"],
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
 
         # Complete facility demolitions — refund 25% of build cost (floored)
         due_demolitions = (
@@ -244,8 +308,10 @@ def run_tick():
                 cost = FACILITY_COSTS.get(infra.type, {"minerals": 0, "fuel": 0})
                 minerals_refund = int(cost["minerals"] * DEMOLISH_REFUND_FRACTION)
                 fuel_refund = int(cost["fuel"] * DEMOLISH_REFUND_FRACTION)
+                currency_refund = int(cost.get("currency", 0) * DEMOLISH_REFUND_FRACTION)
                 nation_obj.minerals += minerals_refund
                 nation_obj.fuel += fuel_refund
+                nation_obj.currency += currency_refund
                 db.add(Event(
                     type="facility_demolition_complete",
                     payload={
@@ -254,6 +320,7 @@ def run_tick():
                         "facility_type": infra.type,
                         "minerals_refunded": minerals_refund,
                         "fuel_refunded": fuel_refund,
+                        "currency_refunded": currency_refund,
                         "tick_at": tick_at.isoformat(),
                     },
                     scheduled_for=tick_at,
@@ -507,11 +574,38 @@ def run_tick():
                     ))
                     db.delete(fleet)
             else:
-                # No defenders — drain resources from territory owner (soft damage model)
+                # No defenders — drain a fraction of this territory's production.
+                # Drain fraction = min(1.0, fleet_size × 0.05): each fighter intercepts
+                # 5% of production, capped at 100% with 20+ fighters.
                 defender_nation = db.get(Nation, dest.nation_id)
                 if defender_nation:
-                    minerals_drain = max(0, round(float(defender_nation.minerals) * 0.05))
-                    fuel_drain = max(0, round(float(defender_nation.fuel) * 0.05))
+                    territory_facilities = (
+                        db.query(Infrastructure.type)
+                        .filter(
+                            Infrastructure.territory_id == dest.id,
+                            Infrastructure.type.in_(["mine", "refinery"]),
+                            Infrastructure.status == "active",
+                        )
+                        .all()
+                    )
+                    mine_count = sum(1 for (t,) in territory_facilities if t == "mine")
+                    refinery_count = sum(1 for (t,) in territory_facilities if t == "refinery")
+                    production = compute_territory_yield(
+                        territory_type=dest.territory_type,
+                        mineral_richness=float(dest.mineral_richness),
+                        fuel_richness=float(dest.fuel_richness),
+                        mine_count=mine_count,
+                        refinery_count=refinery_count,
+                    )
+                    drain_fraction = min(1.0, fleet.unit_count * 0.05)
+                    minerals_drain = min(
+                        round(production["minerals_per_tick"] * drain_fraction),
+                        max(0, int(defender_nation.minerals)),
+                    )
+                    fuel_drain = min(
+                        round(production["fuel_per_tick"] * drain_fraction),
+                        max(0, int(defender_nation.fuel)),
+                    )
                     defender_nation.minerals = max(0, defender_nation.minerals - minerals_drain)
                     defender_nation.fuel = max(0, defender_nation.fuel - fuel_drain)
                     db.add(Event(
@@ -567,6 +661,102 @@ def run_tick():
                     processed_at=tick_at,
                     status="processed",
                 ))
+
+        # ── Dissent update ────────────────────────────────────────────────────
+        # Build per-territory fleet-presence map from current fleet statuses.
+        # holding/engaged fleets on enemy territory raise dissent; we look at
+        # destination_territory for in-transit-style and origin_territory for
+        # stationed-on-enemy and holding/engaged.
+        holding_on: set[int] = set()   # territory_ids with a holding enemy fleet
+        engaged_on: set[int] = set()   # territory_ids with an engaged enemy fleet
+        for fleet in db.query(Fleet).filter(Fleet.status.in_(["holding", "engaged"])).all():
+            dest = db.get(Territory, fleet.origin_territory)
+            if dest and dest.nation_id and dest.nation_id != fleet.nation_id:
+                if fleet.status == "holding":
+                    holding_on.add(dest.id)
+                else:
+                    engaged_on.add(dest.id)
+
+        # Propaganda Office presence: set of territory_ids with an active office
+        office_territories: set[int] = {
+            t_id for (t_id,) in db.query(Infrastructure.territory_id).filter(
+                Infrastructure.type == "propaganda_office",
+                Infrastructure.status == "active",
+            ).all()
+        }
+
+        # Rebuild war_role with fresh data (war_pending may have promoted above)
+        war_role_now: dict[int, str] = {}
+        for war_row in db.query(Diplomacy).filter(Diplomacy.status == "war").all():
+            for nid in (war_row.nation_a, war_row.nation_b):
+                if nid not in war_role_now:
+                    war_role_now[nid] = "aggressor" if war_row.declared_by == nid else "defender"
+
+        # Process dissent for every colonized territory
+        for t in db.query(Territory).filter(Territory.is_colonized == True).all():
+            if t.nation_id is None:
+                continue
+
+            row = db.query(TerritoryDissent).filter(TerritoryDissent.territory_id == t.id).first()
+            if row is None:
+                row = TerritoryDissent(territory_id=t.id, dissent=0)
+                db.add(row)
+
+            old_dissent = row.dissent
+            delta = 0
+
+            # War-wide penalty (aggressor/defender)
+            role = war_role_now.get(t.nation_id)
+            if role == "aggressor":
+                delta += DISSENT_WAR_AGGRESSOR
+            elif role == "defender":
+                delta += DISSENT_WAR_DEFENDER
+
+            # Fleet-presence bonus
+            occupied = t.id in holding_on or t.id in engaged_on
+            if t.id in engaged_on:
+                delta += DISSENT_FLEET_ENGAGED
+            elif t.id in holding_on:
+                delta += DISSENT_FLEET_HOLDING
+
+            # Decay
+            if occupied:
+                delta += DISSENT_DECAY_OCCUPIED
+                if t.id in office_territories:
+                    delta -= DISSENT_OFFICE_BONUS_OCCUPIED
+            elif role is not None:
+                delta += DISSENT_DECAY_WAR
+                if t.id in office_territories:
+                    delta -= DISSENT_OFFICE_BONUS_NORMAL
+            else:
+                delta += DISSENT_DECAY_PEACE
+                if t.id in office_territories:
+                    delta -= DISSENT_OFFICE_BONUS_NORMAL
+
+            new_dissent = max(0, min(100, old_dissent + delta))
+            row.dissent = new_dissent
+            row.last_updated = tick_at
+
+            # Log threshold crossings (both rising and falling)
+            for threshold in _DISSENT_THRESHOLDS:
+                crossed_up = old_dissent < threshold <= new_dissent
+                crossed_down = old_dissent >= threshold > new_dissent
+                if crossed_up or crossed_down:
+                    db.add(Event(
+                        type="dissent_threshold_crossed",
+                        payload={
+                            "nation_id": t.nation_id,
+                            "territory_id": t.id,
+                            "node_key": t.node_key,
+                            "threshold": threshold,
+                            "direction": "rising" if crossed_up else "falling",
+                            "dissent": new_dissent,
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
 
         # Land in-transit colony ships that have arrived
         arrived_colony_ships = (

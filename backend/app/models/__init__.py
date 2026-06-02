@@ -3,6 +3,8 @@ from .nation import Nation
 from .territory import Territory
 from .infrastructure import Infrastructure
 from .territory_population import TerritoryPopulation
+from .territory_dissent import TerritoryDissent
+from .probe_market import ProbeMarketListing
 from .probe_data import ProbeData, ProbeDataAccess
 from .diplomacy import Diplomacy
 from .fleet import Fleet
@@ -13,6 +15,7 @@ from .resource_log import ResourceLog
 from .chat_message import ChatMessage
 from .mail_message import MailMessage
 from .trade import Trade
+from .tutorial import TutorialState
 
 __all__ = [
     "Player",
@@ -20,6 +23,8 @@ __all__ = [
     "Territory",
     "Infrastructure",
     "TerritoryPopulation",
+    "TerritoryDissent",
+    "ProbeMarketListing",
     "ProbeData",
     "ProbeDataAccess",
     "Diplomacy",
@@ -31,4 +36,5 @@ __all__ = [
     "ChatMessage",
     "MailMessage",
     "Trade",
+    "TutorialState",
 ]

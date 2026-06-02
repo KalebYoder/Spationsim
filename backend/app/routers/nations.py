@@ -1,13 +1,16 @@
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import case, func as sqlfunc
+from sqlalchemy import and_, cast, case, func as sqlfunc, Integer, or_
 from sqlalchemy.orm import Session
 from ..db.database import get_db
+from ..models.event import Event
 from ..models.fleet import Fleet
 from ..models.infrastructure import Infrastructure
 from ..models.nation import Nation
 from ..models.territory import Territory
 from ..models.territory_population import TerritoryPopulation
+from ..models.territory_dissent import TerritoryDissent
+from ..models.tutorial import TutorialState
 from ..models.player import Player
 from ..schemas.nation import NationCreateRequest, NationResponse, PublicNationResponse, TerritoryResponse
 from ..schemas.messaging import NationListItem
@@ -92,6 +95,8 @@ def create_nation(
         territory_id=territory.id,
         current=POPULATION_START,
     ))
+    db.add(TerritoryDissent(territory_id=territory.id, dissent=0))
+    db.add(TutorialState(nation_id=nation.id))
 
     db.commit()
     db.refresh(nation)
@@ -314,3 +319,129 @@ def get_nation_public(
         vacation_mode=owner.vacation_mode if owner else False,
         vacation_since=owner.vacation_since.isoformat() if owner and owner.vacation_since else None,
     )
+
+
+@router.get("/{nation_id}/wars")
+def get_nation_wars(
+    nation_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    if not db.get(Nation, nation_id):
+        raise HTTPException(status_code=404, detail="Nation not found")
+
+    war_events = (
+        db.query(Event)
+        .filter(
+            Event.type == "war_declared",
+            or_(
+                Event.payload["declaring_nation_id"].astext.cast(Integer) == nation_id,
+                Event.payload["target_nation_id"].astext.cast(Integer) == nation_id,
+            ),
+        )
+        .order_by(Event.scheduled_for.desc())
+        .all()
+    )
+
+    result = []
+    for ev in war_events:
+        declaring_id = int(ev.payload["declaring_nation_id"])
+        target_id = int(ev.payload["target_nation_id"])
+        if declaring_id == nation_id:
+            opponent_id = target_id
+            opponent_name = ev.payload.get("target_nation_name", f"Nation #{target_id}")
+        else:
+            opponent_id = declaring_id
+            opponent_name = ev.payload.get("declaring_nation_name", f"Nation #{declaring_id}")
+
+        peace_event = (
+            db.query(Event)
+            .filter(
+                Event.type == "trade_accepted",
+                Event.payload["includes_peace"].astext == "true",
+                Event.scheduled_for >= ev.scheduled_for,
+                or_(
+                    and_(
+                        Event.payload["from_nation_id"].astext.cast(Integer) == nation_id,
+                        Event.payload["to_nation_id"].astext.cast(Integer) == opponent_id,
+                    ),
+                    and_(
+                        Event.payload["from_nation_id"].astext.cast(Integer) == opponent_id,
+                        Event.payload["to_nation_id"].astext.cast(Integer) == nation_id,
+                    ),
+                ),
+            )
+            .order_by(Event.scheduled_for.asc())
+            .first()
+        )
+
+        result.append({
+            "opponent_id": opponent_id,
+            "opponent_name": opponent_name,
+            "declared_at": ev.scheduled_for.isoformat(),
+            "ended_at": peace_event.scheduled_for.isoformat() if peace_event else None,
+            "is_active": peace_event is None,
+        })
+
+    return result
+
+
+@router.get("/{nation_id}/wars/{opponent_id}/log")
+def get_war_combat_log(
+    nation_id: int,
+    opponent_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.get(Nation, nation_id)
+    opponent = db.get(Nation, opponent_id)
+    if not nation or not opponent:
+        raise HTTPException(status_code=404, detail="Nation not found")
+
+    combat_events = (
+        db.query(Event)
+        .filter(
+            Event.type.in_(["combat_round", "resources_drained_by_occupation"]),
+            or_(
+                and_(
+                    Event.payload["attacker_nation_id"].astext.cast(Integer) == nation_id,
+                    Event.payload["defender_nation_id"].astext.cast(Integer) == opponent_id,
+                ),
+                and_(
+                    Event.payload["attacker_nation_id"].astext.cast(Integer) == opponent_id,
+                    Event.payload["defender_nation_id"].astext.cast(Integer) == nation_id,
+                ),
+            ),
+        )
+        .order_by(Event.scheduled_for.asc())
+        .all()
+    )
+
+    territory_ids = {
+        ev.payload["territory_id"]
+        for ev in combat_events
+        if ev.payload.get("territory_id") is not None
+    }
+    territories = {}
+    if territory_ids:
+        territories = {
+            t.id: t
+            for t in db.query(Territory).filter(Territory.id.in_(territory_ids)).all()
+        }
+
+    def enrich(ev):
+        p = dict(ev.payload)
+        tid = p.get("territory_id")
+        if tid is not None and tid in territories:
+            t = territories[tid]
+            p["territory_node_key"] = t.node_key
+            p["territory_name"] = t.name
+        return {"type": ev.type, "tick_at": ev.scheduled_for.isoformat(), "payload": p}
+
+    return {
+        "nation_id": nation_id,
+        "nation_name": nation.name,
+        "opponent_id": opponent_id,
+        "opponent_name": opponent.name,
+        "events": [enrich(ev) for ev in combat_events],
+    }

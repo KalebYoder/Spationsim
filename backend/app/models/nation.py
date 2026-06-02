@@ -34,6 +34,7 @@ class Nation(Base):
                                   foreign_keys="Diplomacy.nation_a")
     diplomacy_as_b = relationship("Diplomacy", back_populates="nation_b_rel",
                                   foreign_keys="Diplomacy.nation_b")
+    tutorial_state = relationship("TutorialState", back_populates="nation", uselist=False)
 
     # player_id unique constraint already creates an index; no additional index needed there.
     # Index on name is covered by the unique constraint.

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNation } from '../hooks/useNation'
+import { useTutorial } from '../hooks/useTutorial'
 import { Card, SectionLabel, EmptyState, Badge, Btn } from '../components/ui'
 
 function RenameInput({ current, onSave, onCancel }) {
@@ -45,7 +46,17 @@ function YieldTag({ value, color, suffix }) {
   )
 }
 
-function TerritoryCard({ territory, flagColor, onRenamed, yieldData }) {
+function ProductionRow({ label, value, unit, color }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: 13 }}>
+      <span style={{ color: 'var(--text-secondary)', minWidth: 110 }}>{label}</span>
+      <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{value}</span>
+      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{unit}</span>
+    </div>
+  )
+}
+
+function TerritoryCard({ territory, flagColor, onRenamed, yieldData, highlightProduction }) {
   const [open, setOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -154,25 +165,84 @@ function TerritoryCard({ territory, flagColor, onRenamed, yieldData }) {
       {error && <p style={{ color: 'red', padding: '4px 20px', fontSize: 13 }}>{error}</p>}
 
       {open && (
-        <div style={{ padding: '16px 20px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
-          <div>
-            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 }}>
-              Population
+        <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+          {yieldData && (
+            <div style={highlightProduction ? {
+              outline: '1px solid var(--amber)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '8px',
+            } : {}}>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 10 }}>
+                Production / Tick
+              </div>
+              <div style={{ display: 'flex', gap: 32 }}>
+
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Gains</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {yieldData.minerals_per_tick > 0 && (
+                      <ProductionRow label="Minerals" value={`+${yieldData.minerals_per_tick}`} unit="min/t" color="var(--amber)" />
+                    )}
+                    {yieldData.fuel_per_tick > 0 && (
+                      <ProductionRow label="Fuel" value={`+${yieldData.fuel_per_tick}`} unit="fuel/t" color="var(--teal)" />
+                    )}
+                    {yieldData.currency_income_per_tick > 0 && (
+                      <ProductionRow label="Territory income" value={`+${yieldData.currency_income_per_tick}`} unit="¤/t" color="var(--teal)" />
+                    )}
+                    {yieldData.minerals_per_tick === 0 && yieldData.fuel_per_tick === 0 && yieldData.currency_income_per_tick === 0 && (
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No active facilities</span>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Costs</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {yieldData.currency_upkeep_per_tick > 0 && (
+                      <ProductionRow label="Fighter upkeep" value={`−${yieldData.currency_upkeep_per_tick}`} unit="¤/t" color="var(--danger)" />
+                    )}
+                    {yieldData.currency_upkeep_per_tick === 0 && (
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>None</span>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ borderLeft: '1px solid var(--border)', paddingLeft: 32 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>Net</div>
+                  <ProductionRow
+                    label="Currency"
+                    value={yieldData.currency_net_per_tick >= 0 ? `+${yieldData.currency_net_per_tick}` : `${yieldData.currency_net_per_tick}`}
+                    unit="¤/t"
+                    color={yieldData.currency_net_per_tick >= 0 ? 'var(--teal)' : 'var(--danger)'}
+                  />
+                </div>
+
+              </div>
             </div>
-            <EmptyState title="—" body="No population data yet" />
-          </div>
-          <div>
-            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 }}>
-              Facilities
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
+            <div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 }}>
+                Population
+              </div>
+              <EmptyState title="—" body="No population data yet" />
             </div>
-            <EmptyState title="None built" body="Build facilities from the Facilities page" />
-          </div>
-          <div>
-            <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 }}>
-              Stationed Military
+            <div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 }}>
+                Facilities
+              </div>
+              <EmptyState title="None built" body="Build facilities from the Facilities page" />
             </div>
-            <EmptyState title="None" body="Station fleets from the Military page" />
+            <div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 }}>
+                Stationed Military
+              </div>
+              <EmptyState title="None" body="Station fleets from the Military page" />
+            </div>
           </div>
+
         </div>
       )}
     </Card>
@@ -181,10 +251,17 @@ function TerritoryCard({ territory, flagColor, onRenamed, yieldData }) {
 
 export default function Planets() {
   const { nation, loading: nationLoading } = useNation()
+  const { tutorial, completeStep3 } = useTutorial()
   const [territories, setTerritories] = useState([])
   const [yieldsById, setYieldsById] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (tutorial?.current_step === 3) {
+      completeStep3()
+    }
+  }, [tutorial?.current_step])
 
   useEffect(() => {
     if (!nation) return
@@ -248,6 +325,7 @@ export default function Planets() {
                 flagColor={nation?.flag_color}
                 onRenamed={handleRenamed}
                 yieldData={yieldsById[t.id] ?? null}
+                highlightProduction={tutorial?.current_step === 3}
               />
             ))}
         </div>

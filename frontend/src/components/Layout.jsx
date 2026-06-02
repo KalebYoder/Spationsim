@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useNation } from '../hooks/useNation'
+import { useTutorial } from '../hooks/useTutorial'
 import ChatWindow from './ChatWindow'
+import TutorialPanel from './TutorialPanel'
 
 const NAV = [
   { to: '/',           label: 'Nation',     end: true         },
@@ -10,6 +12,7 @@ const NAV = [
   { to: '/facilities', label: 'Facilities'                    },
   { to: '/military',   label: 'Military'                      },
   { to: '/probes',     label: 'Probes'                        },
+  { to: '/market',     label: 'Market'                        },
   { to: '/planets',    label: 'Planets'                       },
   { to: '/map',        label: 'Map'                           },
   { to: '/diplomacy',  label: 'Diplomacy'                     },
@@ -34,6 +37,7 @@ const navLinkStyle = ({ isActive }) => ({
 export default function Layout() {
   const { player, logout } = useAuth()
   const { nation } = useNation()
+  const { tutorial, dismiss } = useTutorial()
   const [mailUnread, setMailUnread] = useState(0)
   const [friendPending, setFriendPending] = useState(0)
   const [tradeIncoming, setTradeIncoming] = useState(0)
@@ -180,6 +184,10 @@ export default function Layout() {
             </NavLink>
           ))}
         </div>
+
+        {tutorial && !tutorial.dismissed && tutorial.current_step <= 4 && (
+          <TutorialPanel tutorial={tutorial} dismiss={dismiss} />
+        )}
 
         {/* Footer */}
         <div style={{
