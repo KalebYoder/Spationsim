@@ -283,22 +283,7 @@ class TestUnderConstruction:
 
 
 # ---------------------------------------------------------------------------
-# 5. Probe factory excluded
-# ---------------------------------------------------------------------------
-
-class TestProbeFactory:
-
-    def test_probe_factory_not_counted(self, db, player, nation, territory):
-        _make_infra(db, territory.id, "probe_factory")
-        db.commit()
-        c = _auth_client(db, player)
-        r = c.get(f"/api/nations/{nation.id}")
-        assert r.json()["industrial_strength"] == 0
-        app.dependency_overrides.clear()
-
-
-# ---------------------------------------------------------------------------
-# 6. Nation isolation
+# 5. Nation isolation
 # ---------------------------------------------------------------------------
 
 class TestIsolation:

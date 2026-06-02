@@ -14,10 +14,12 @@ import Planets from './pages/Planets'
 import MapView from './pages/MapView'
 import Diplomacy from './pages/Diplomacy'
 import NationProfile from './pages/NationProfile'
+import CombatLog from './pages/CombatLog'
 import Mail from './pages/Mail'
 import EventLog from './pages/EventLog'
 import FriendsList from './pages/FriendsList'
 import Trade from './pages/Trade'
+import ProbeMarket from './pages/ProbeMarket'
 
 function NationGate({ children }) {
   const { player } = useAuth()
@@ -50,7 +52,9 @@ export default function App() {
           <Route path="/diplomacy"      element={<Diplomacy />} />
           <Route path="/friends"        element={<FriendsList />} />
           <Route path="/trade"          element={<Trade />} />
+          <Route path="/market"         element={<ProbeMarket />} />
           <Route path="/nations/:id"    element={<NationProfile />} />
+          <Route path="/nations/:id/wars/:opponentId" element={<CombatLog />} />
           <Route path="/mail"           element={<Mail />} />
           <Route path="/log"        element={<EventLog />} />
         </Route>

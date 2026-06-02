@@ -3,13 +3,13 @@ import { useNation } from '../hooks/useNation'
 import { Card, SectionLabel, EmptyState, Tr, Td, Badge, Btn, StatCard } from '../components/ui'
 
 const FACILITY_TYPES = [
-  { value: 'mine',          label: 'Mine',         cost: { minerals:  60, fuel:  30, currency:  500 }, buildTicks: 1 },
-  { value: 'refinery',      label: 'Refinery',     cost: { minerals:  30, fuel:  60, currency:  500 }, buildTicks: 1 },
-  { value: 'shipyard',      label: 'Shipyard',     cost: { minerals: 150, fuel:  60, currency: 2000 }, buildTicks: 2 },
-  { value: 'probe_factory', label: 'Probe Factory',cost: { minerals:  30, fuel:  15 },                 buildTicks: 1 },
+  { value: 'mine',               label: 'Mine',               cost: { minerals:  60, fuel:  30, currency:  500 }, buildTicks: 1 },
+  { value: 'refinery',           label: 'Refinery',           cost: { minerals:  30, fuel:  60, currency:  500 }, buildTicks: 1 },
+  { value: 'shipyard',           label: 'Shipyard',           cost: { minerals: 150, fuel:  60, currency: 2000 }, buildTicks: 2 },
+  { value: 'propaganda_office',  label: 'Propaganda Office',  cost: { minerals: 500, fuel: 250, currency: 6000 }, buildTicks: 2 },
 ]
 
-const TYPE_LABEL = { mine: 'Mine', refinery: 'Refinery', shipyard: 'Shipyard', probe_factory: 'Probe Factory' }
+const TYPE_LABEL = { mine: 'Mine', refinery: 'Refinery', shipyard: 'Shipyard', propaganda_office: 'Propaganda Office' }
 
 function statusBadgeColor(status) {
   if (status === 'active') return 'teal'

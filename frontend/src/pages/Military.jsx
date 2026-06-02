@@ -41,7 +41,7 @@ function ManufactureForm({ unit, shipyardTerritories, onManufactured, onCancel }
       <div style={{ marginBottom: 12, fontWeight: 500 }}>
         Manufacture {UNIT_LABELS[unit.type] || unit.type}
         <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 12 }}>
-          ATK {unit.attack} · Shields {unit.shields} · Str. Int. {unit.structural_integrity}
+          FP {unit.firepower} · Shields {unit.shields} · Str. Int. {unit.structural_integrity}
         </span>
       </div>
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -346,11 +346,11 @@ export default function Military() {
         {units.length === 0 ? (
           <EmptyState title="No unit types available" body="Build a shipyard to unlock starfighters." />
         ) : (
-          <Table headers={['Unit', 'ATK', 'Shields', 'Str. Int.', 'Speed', 'Manufacture Cost', '']}>
+          <Table headers={['Unit', 'FP', 'Shields', 'Str. Int.', 'Speed', 'Manufacture Cost', '']}>
             {units.map(u => (
               <Tr key={u.type}>
                 <Td><Badge color="rose">{UNIT_LABELS[u.type] || u.type}</Badge></Td>
-                <Td>{u.attack}</Td>
+                <Td>{u.firepower}</Td>
                 <Td>{u.shields}</Td>
                 <Td>{u.structural_integrity}</Td>
                 <Td muted>{u.nodes_per_tick} node{u.nodes_per_tick !== 1 ? 's' : ''}/tick</Td>

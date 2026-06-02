@@ -22,6 +22,7 @@ class Territory(Base):
     nation = relationship("Nation", back_populates="territories", foreign_keys=[nation_id])
     infrastructure = relationship("Infrastructure", back_populates="territory")
     population = relationship("TerritoryPopulation", back_populates="territory", uselist=False)
+    dissent = relationship("TerritoryDissent", back_populates="territory", uselist=False)
     probe_data = relationship("ProbeData", back_populates="territory")
     fleets_origin = relationship("Fleet", back_populates="origin_territory_rel",
                                  foreign_keys="Fleet.origin_territory")

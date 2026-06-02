@@ -23,7 +23,7 @@ export function Card({ children, style }) {
   )
 }
 
-export function StatCard({ label, value, sub, accent }) {
+export function StatCard({ label, value, sub, accent, subColor }) {
   return (
     <Card>
       <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 8 }}>
@@ -32,7 +32,7 @@ export function StatCard({ label, value, sub, accent }) {
       <div style={{ fontSize: 26, fontWeight: 600, color: accent || 'var(--text-primary)', lineHeight: 1 }}>
         {value ?? '—'}
       </div>
-      {sub && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>{sub}</div>}
+      {sub && <div style={{ fontSize: 12, color: subColor || 'var(--text-muted)', marginTop: 6 }}>{sub}</div>}
     </Card>
   )
 }

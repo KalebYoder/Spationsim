@@ -216,13 +216,13 @@ class TestEconomyData:
         assert economy["minerals_delta"] == 6
 
     def test_currency_delta_from_mine_territory(self, auth_client, db, test_nation):
-        # 500 income, no facility upkeep
+        # income=30 (1 mine), territory_upkeep=10 (k×1²), net=20
         home = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
         _mine(db, home.id)
         _commit_and_run_tick(db)
 
         economy = auth_client.get("/api/events/log").json()[0]["economy"]
-        assert economy["currency_delta"] == 500
+        assert economy["currency_delta"] == 20
 
     def test_no_entry_when_zero_production_and_no_events(self, auth_client, db, test_nation):
         # Nation with territory but no mine → no deltas → no resource_log → no entry

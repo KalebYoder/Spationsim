@@ -3,7 +3,7 @@ Test suite for the Currency resource feature.
 
 Covers four areas:
   1. Nation model — currency column default is 0, nullable=False
-  2. Tick logic (run_tick) — currency earned per colonized territory (500/territory/tick)
+  2. Tick logic (run_tick) — currency earned per active mine or refinery (30/facility/tick)
   3. ResourceLog model — currency_delta column written each tick
   4. NationResponse schema — currency field present and correct in GET /api/nations/mine
 
@@ -43,9 +43,11 @@ from app.core.security import create_access_token, hash_password
 # Constants
 # ---------------------------------------------------------------------------
 
-CURRENCY_PER_TERRITORY = 500
-# Facilities have no currency upkeep; net per territory equals gross income
-NET_PER_INCOME_TERRITORY = CURRENCY_PER_TERRITORY  # 500
+CURRENCY_PER_FACILITY = 30
+TERRITORY_UPKEEP_K = 10   # k × n² territory count currency upkeep, mirrors constants.py
+# Net income for a nation with n territories and f income facilities, no fighters:
+#   NET = f × 30 − k × n²
+NET_PER_FACILITY = CURRENCY_PER_FACILITY  # 30 (gross; subtract territory upkeep to get net)
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +93,7 @@ def _make_colonized_territory(
 
 
 def _add_mine(db: Session, territory_id: int) -> Infrastructure:
-    """Add a mine to a territory, making it resource-generating (500 currency/tick income)."""
+    """Add a mine to a territory, making it resource-generating (30 currency/tick income)."""
     infra = Infrastructure(territory_id=territory_id, type="mine", level=1)
     db.add(infra)
     db.flush()
@@ -315,12 +317,12 @@ class TestNationResponseCurrencyField:
 class TestTickCurrencyGeneration:
     """run_tick: currency is earned per colonized territory each tick."""
 
-    def test_one_income_territory_earns_500_currency_per_tick(
+    def test_one_mine_earns_30_currency_per_tick(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """Nation with 1 territory+mine: 500 income per tick (no facility upkeep)."""
+        """1 territory, 1 mine: income=30, territory_upkeep=10×1²=10, net=20."""
         _make_income_territory(db, test_nation.id, "0,0")
 
         _commit_and_run_tick(db)
@@ -328,19 +330,20 @@ class TestTickCurrencyGeneration:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == float(NET_PER_INCOME_TERRITORY), (
-                f"Nation with 1 mine territory must net {NET_PER_INCOME_TERRITORY} currency per tick, "
+            expected = NET_PER_FACILITY - TERRITORY_UPKEEP_K * 1**2  # 30 - 10 = 20
+            assert float(nation.currency) == float(expected), (
+                f"1 mine (30) minus territory upkeep (10) must net 20, "
                 f"got {nation.currency!r}"
             )
         finally:
             fresh.close()
 
-    def test_three_income_territories_earn_1470_currency_per_tick(
+    def test_three_mines_earn_90_currency_per_tick(
         self,
         db: Session,
         test_nation: Nation,
     ):
-        """Nation with 3 territories+mines: 3×500 = 1500 income (no facility upkeep)."""
+        """3 territories, 1 mine each: income=90, territory_upkeep=10×3²=90, net=0."""
         _make_income_territory(db, test_nation.id, "0,0", distance_from_center=0)
         _make_income_territory(db, test_nation.id, "1,0", distance_from_center=1)
         _make_income_territory(db, test_nation.id, "2,0", distance_from_center=2)
@@ -350,9 +353,9 @@ class TestTickCurrencyGeneration:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            expected = 3 * NET_PER_INCOME_TERRITORY
+            expected = 3 * NET_PER_FACILITY - TERRITORY_UPKEEP_K * 3**2  # 90 - 90 = 0
             assert float(nation.currency) == float(expected), (
-                f"Nation with 3 mine territories must net {expected} currency per tick, "
+                f"3 mines (90) minus territory upkeep (90) must net 0, "
                 f"got {nation.currency!r}"
             )
         finally:
@@ -384,7 +387,7 @@ class TestTickCurrencyGeneration:
         db: Session,
         test_nation: Nation,
     ):
-        """After 2 ticks with 1 income territory, currency must equal 2 × 500 = 1000."""
+        """After 2 ticks, 1 mine (30) minus territory_upkeep (10) = net 20/tick → 40 total."""
         _make_income_territory(db, test_nation.id, "0,0")
 
         _commit_and_run_tick(db)
@@ -394,9 +397,10 @@ class TestTickCurrencyGeneration:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            expected = 2 * NET_PER_INCOME_TERRITORY
+            net_per_tick = NET_PER_FACILITY - TERRITORY_UPKEEP_K * 1**2  # 30 - 10 = 20
+            expected = 2 * net_per_tick
             assert float(nation.currency) == float(expected), (
-                f"After 2 ticks with 1 mine territory, currency must be {expected}, "
+                f"After 2 ticks with 1 mine (net 20/tick), currency must be {expected}, "
                 f"got {nation.currency!r}"
             )
         finally:
@@ -416,10 +420,10 @@ class TestTickCurrencyGeneration:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            # 800 existing + 500 income = 1300
-            expected = 800 + NET_PER_INCOME_TERRITORY
+            # 800 existing + (30 income − 10 territory_upkeep) = 820
+            expected = 800 + NET_PER_FACILITY - TERRITORY_UPKEEP_K * 1**2
             assert float(nation.currency) == float(expected), (
-                f"Tick must ADD {NET_PER_INCOME_TERRITORY} net to existing 800, expected {expected}, "
+                f"Tick must ADD net 20 to existing 800; expected {expected}, "
                 f"got {nation.currency!r}"
             )
         finally:
@@ -430,7 +434,8 @@ class TestTickCurrencyGeneration:
         db: Session,
         test_nation: Nation,
     ):
-        """A colonized territory with no mine or refinery generates 0 currency income."""
+        """A colonized territory with no mine/refinery generates 0 income, but territory
+        count upkeep (k×1²=10) still applies, so net = -10."""
         _make_colonized_territory(db, test_nation.id, "0,0")  # bare — no mine
 
         _commit_and_run_tick(db)
@@ -438,8 +443,9 @@ class TestTickCurrencyGeneration:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            assert float(nation.currency) == 0.0, (
-                f"Territory without mine/refinery must not generate currency, "
+            expected = -TERRITORY_UPKEEP_K * 1**2  # 0 income − 10 upkeep = -10
+            assert float(nation.currency) == float(expected), (
+                f"No-mine territory earns 0 but pays territory upkeep; expected {expected}, "
                 f"got {nation.currency!r}"
             )
         finally:
@@ -470,9 +476,10 @@ class TestTickCurrencyGeneration:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            # Only the 1 colonized territory with mine generates income; net = 500
-            assert float(nation.currency) == float(NET_PER_INCOME_TERRITORY), (
-                f"Uncolonized territory must not add currency. Expected {NET_PER_INCOME_TERRITORY}, "
+            # 1 owned territory with mine: income=30, territory_upkeep=10, net=20
+            expected = NET_PER_FACILITY - TERRITORY_UPKEEP_K * 1**2
+            assert float(nation.currency) == float(expected), (
+                f"1 mine territory (net 20); uncolonized territory not counted. Expected {expected}, "
                 f"got {nation.currency!r}"
             )
         finally:
@@ -496,13 +503,15 @@ class TestTickCurrencyGeneration:
             test_n = fresh.get(Nation, test_nation.id)
             other_n = fresh.get(Nation, other_nation.id)
 
-            assert float(test_n.currency) == float(1 * NET_PER_INCOME_TERRITORY), (
-                f"test_nation with 1 mine territory must net {NET_PER_INCOME_TERRITORY}, "
-                f"got {test_n.currency!r}"
+            # test_nation: n=1, income=30, territory_upkeep=10, net=20
+            # other_nation: n=2, income=60, territory_upkeep=40, net=20
+            expected_a = 1 * NET_PER_FACILITY - TERRITORY_UPKEEP_K * 1**2  # 20
+            expected_b = 2 * NET_PER_FACILITY - TERRITORY_UPKEEP_K * 2**2  # 20
+            assert float(test_n.currency) == float(expected_a), (
+                f"test_nation (1 mine, n=1): expected {expected_a}, got {test_n.currency!r}"
             )
-            assert float(other_n.currency) == float(2 * NET_PER_INCOME_TERRITORY), (
-                f"other_nation with 2 mine territories must net {2 * NET_PER_INCOME_TERRITORY}, "
-                f"got {other_n.currency!r}"
+            assert float(other_n.currency) == float(expected_b), (
+                f"other_nation (2 mines, n=2): expected {expected_b}, got {other_n.currency!r}"
             )
         finally:
             fresh.close()
@@ -512,7 +521,7 @@ class TestTickCurrencyGeneration:
         db: Session,
         test_nation: Nation,
     ):
-        """Currency per tick is precisely 500 × resource-generating territory count (net after upkeep)."""
+        """2 territories, 1 mine each: income=60, territory_upkeep=10×4=40, net=20."""
         _make_income_territory(db, test_nation.id, "0,0", distance_from_center=0)
         _make_income_territory(db, test_nation.id, "1,0", distance_from_center=1)
 
@@ -521,9 +530,9 @@ class TestTickCurrencyGeneration:
         fresh = SessionLocal()
         try:
             nation = fresh.get(Nation, test_nation.id)
-            expected = 2 * NET_PER_INCOME_TERRITORY
+            expected = 2 * NET_PER_FACILITY - TERRITORY_UPKEEP_K * 2**2  # 60 - 40 = 20
             assert float(nation.currency) == float(expected), (
-                f"2 mine territories net {expected} (2×500), got {nation.currency!r}"
+                f"2 mines (60) minus territory upkeep (40) = 20; got {nation.currency!r}"
             )
         finally:
             fresh.close()
@@ -606,9 +615,10 @@ class TestResourceLogCurrencyDelta:
                 ResourceLog.nation_id == test_nation.id,
             ).order_by(ResourceLog.id.desc()).first()
             assert log is not None
-            expected_delta = 2 * NET_PER_INCOME_TERRITORY  # 2 × 500 = 1000
+            # 2 territories: income=60, territory_upkeep=40, net=20
+            expected_delta = 2 * NET_PER_FACILITY - TERRITORY_UPKEEP_K * 2**2  # 20
             assert float(log.currency_delta) == float(expected_delta), (
-                f"ResourceLog.currency_delta for 2 mine territories must be {expected_delta}, "
+                f"ResourceLog.currency_delta for 2 mine territories (net 20) must be {expected_delta}, "
                 f"got {log.currency_delta!r}"
             )
         finally:
@@ -727,7 +737,7 @@ class TestGetMineAfterTick:
         test_nation: Nation,
         test_player: Player,
     ):
-        """After a tick with 1 mine territory, GET /api/nations/mine returns 500 (full income, no upkeep)."""
+        """1 mine territory: income=30, territory_upkeep=10, net=20 returned by GET /api/nations/mine."""
         _make_income_territory(db, test_nation.id, "0,0")
 
         _commit_and_run_tick(db)
@@ -743,9 +753,10 @@ class TestGetMineAfterTick:
 
             assert resp.status_code == 200, resp.text
             data = resp.json()
-            assert float(data["currency"]) == float(NET_PER_INCOME_TERRITORY), (
-                f"After one tick with 1 mine territory, GET /api/nations/mine must return "
-                f"currency={NET_PER_INCOME_TERRITORY}, got {data['currency']!r}"
+            expected = NET_PER_FACILITY - TERRITORY_UPKEEP_K * 1**2  # 20
+            assert float(data["currency"]) == float(expected), (
+                f"After tick: 1 mine (30) minus territory upkeep (10) = {expected}; "
+                f"got {data['currency']!r}"
             )
         finally:
             fresh_session.close()

@@ -168,6 +168,7 @@ def set_relation(
         row.status = "war_pending"
         row.war_starts_at = now + timedelta(hours=WAR_PENDING_HOURS)
         row.updated_at = now
+        row.declared_by = nation.id   # immutable — never mutated after this point
         db.flush()
         # Notify both parties via event log
         db.add(Event(

@@ -187,7 +187,7 @@ class ColonyShipStatsResponse(BaseModel):
 
 class UnitStatsResponse(BaseModel):
     type: str
-    attack: int
+    firepower: int
     shields: int
     structural_integrity: int
     nodes_per_tick: int
@@ -224,8 +224,8 @@ class InfrastructureBuildRequest(BaseModel):
     @field_validator("type")
     @classmethod
     def validate_type(cls, v: str) -> str:
-        if v not in ("mine", "refinery", "shipyard", "probe_factory"):
-            raise ValueError("Type must be 'mine', 'refinery', 'shipyard', or 'probe_factory'")
+        if v not in ("mine", "refinery", "shipyard", "propaganda_office"):
+            raise ValueError("Type must be 'mine', 'refinery', 'shipyard', or 'propaganda_office'")
         return v
 
 
@@ -297,3 +297,25 @@ class ProbeDataResponse(BaseModel):
     is_colonized: bool
     nation_id: int | None
     nation_name: str | None
+
+
+class ProbeMarketListRequest(BaseModel):
+    probe_data_id: int
+    price: float
+
+
+class ProbeMarketListingResponse(BaseModel):
+    id: int
+    probe_data_id: int
+    seller_nation_id: int
+    seller_nation_name: str
+    mineral_richness: float
+    fuel_richness: float
+    price: float
+    listed_at: str
+    is_colonized: bool
+    colonized_by_name: str | None
+    is_own: bool           # caller is the seller
+    already_have: bool     # caller already owns this probe data (discovered or purchased)
+    node_key: str | None   # only populated when is_own or already_have
+    is_reachable: bool | None  # None if caller has no territories yet

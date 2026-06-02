@@ -6,12 +6,14 @@ from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.colony_ship import ColonyShip
 from ..models.probe_data import ProbeData, ProbeDataAccess
+from ..models.probe_visibility import ProbeVisibility
 from ..models.event import Event
 from ..models.fleet import Fleet
 from ..models.infrastructure import Infrastructure
 from ..models.nation import Nation
 from ..models.territory import Territory
 from ..models.territory_population import TerritoryPopulation
+from ..models.territory_dissent import TerritoryDissent
 from ..models.player import Player
 from ..services.pathfinding import compute_reachable_ids
 from ..schemas.nation import (
@@ -126,7 +128,7 @@ def get_units(
     return [
         UnitStatsResponse(
             type=unit_type,
-            attack=stats["attack"],
+            firepower=stats["firepower"],
             shields=stats["shields"],
             structural_integrity=stats["structural_integrity"],
             nodes_per_tick=stats["nodes_per_tick"],
@@ -183,34 +185,28 @@ def manufacture_starfighter(
     if nation.minerals < mineral_cost or nation.fuel < fuel_cost or nation.currency < currency_cost:
         raise HTTPException(status_code=409, detail="Insufficient resources")
 
-    total_pop, assigned_pop = _nation_pop_stats(nation.id, db)
-    unassigned = total_pop - assigned_pop
-    if unassigned < body.quantity:
+    pop_row = db.query(TerritoryPopulation).filter(
+        TerritoryPopulation.territory_id == territory.id
+    ).first()
+    territory_pop = pop_row.current if pop_row else 0
+
+    territory_facilities = db.query(Infrastructure).filter(
+        Infrastructure.territory_id == territory.id,
+        Infrastructure.status.in_(["active", "under_construction"]),
+    ).all()
+    territory_assigned = sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in territory_facilities)
+    territory_unassigned = territory_pop - territory_assigned
+
+    if territory_unassigned < body.quantity:
         raise HTTPException(
             status_code=409,
-            detail=f"Insufficient unassigned population (need {body.quantity}, have {unassigned})",
+            detail=f"Insufficient unassigned population at this territory (need {body.quantity}, have {max(0, territory_unassigned)})",
         )
 
-    # Deduct from territory current population only. The richness-based cap is
-    # never modified, so population regrows naturally each tick. Fighter deaths
-    # do not restore population — pop spent at manufacture is permanently gone
+    # Deduct from the shipyard territory's population only. Fighter deaths do
+    # not restore population — pop spent at manufacture is permanently gone
     # when the unit is destroyed in combat.
-    territory_ids = [
-        t_id for (t_id,) in
-        db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
-    ]
-    qty_remaining = body.quantity
-    for pop in (
-        db.query(TerritoryPopulation)
-        .filter(TerritoryPopulation.territory_id.in_(territory_ids))
-        .order_by(TerritoryPopulation.current.desc())
-        .all()
-    ):
-        if qty_remaining <= 0:
-            break
-        deduct = min(qty_remaining, pop.current)
-        pop.current -= deduct
-        qty_remaining -= deduct
+    pop_row.current -= body.quantity
 
     nation.minerals -= mineral_cost
     nation.fuel -= fuel_cost
@@ -491,6 +487,14 @@ def conquer_territory(
     for pd in db.query(ProbeData).filter(ProbeData.territory_id == dest.id).all():
         db.query(ProbeDataAccess).filter(ProbeDataAccess.probe_data_id == pd.id).delete()
     db.query(ProbeData).filter(ProbeData.territory_id == dest.id).delete()
+    db.query(ProbeVisibility).filter(ProbeVisibility.territory_id == dest.id).delete()
+
+    # Conquered population starts hostile — set dissent to 60 instantly
+    dissent_row = db.query(TerritoryDissent).filter(TerritoryDissent.territory_id == dest.id).first()
+    if dissent_row:
+        dissent_row.dissent = 60
+    else:
+        db.add(TerritoryDissent(territory_id=dest.id, dissent=60))
 
     fleet.status = "stationed"
     fleet.origin_territory = dest.id
@@ -571,6 +575,10 @@ def claim_territory(
     territory.is_colonized = True
     territory.nation_id = nation.id
     territory.colonized_at = now
+
+    # Create dissent row at 0 for this newly-colonized territory
+    if not db.query(TerritoryDissent).filter(TerritoryDissent.territory_id == territory.id).first():
+        db.add(TerritoryDissent(territory_id=territory.id, dissent=0))
 
     # Remove stale probe data — territory is now on the map, visible to all
     for pd in db.query(ProbeData).filter(ProbeData.territory_id == territory.id).all():
@@ -744,6 +752,15 @@ def send_colony_ship(
         raise HTTPException(status_code=409, detail="Origin and destination must differ")
     if not dest.is_colonized or dest.nation_id != nation.id:
         raise HTTPException(status_code=409, detail="Colony ships can only travel to your own colonized territories")
+
+    all_territories = db.query(Territory).all()
+    territory_dicts = [
+        {"id": t.id, "node_key": t.node_key, "territory_type": t.territory_type, "nation_id": t.nation_id}
+        for t in all_territories
+    ]
+    reachable = compute_reachable_ids(origin.node_key, nation.id, territory_dicts)
+    if dest.id not in reachable:
+        raise HTTPException(status_code=409, detail="Destination is not reachable from origin")
 
     now = datetime.now(timezone.utc)
     distance = _hex_distance(origin.node_key, dest.node_key)

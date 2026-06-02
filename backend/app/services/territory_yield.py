@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-CURRENCY_INCOME_PER_TERRITORY = 500  # per territory with >= 1 active mine or refinery
+CURRENCY_INCOME_PER_FACILITY = 30    # per active mine or refinery per tick
 FIGHTER_CURRENCY_UPKEEP = 2          # per stationed fighter per tick
 
 
@@ -32,13 +32,13 @@ def compute_territory_yield(
     Returns:
         minerals_per_tick       — minerals produced by active mines
         fuel_per_tick           — fuel produced by active refineries
-        currency_income_per_tick — 500 if territory has >= 1 active mine or refinery
+        currency_income_per_tick — 30 × (mine_count + refinery_count)
         currency_upkeep_per_tick — 2 × stationed_fighters
         currency_net_per_tick   — income minus upkeep (can be negative)
     """
     minerals_per_tick = mine_count * _mine_output(mineral_richness, territory_type)
     fuel_per_tick = refinery_count * _refinery_output(fuel_richness, territory_type)
-    currency_income = CURRENCY_INCOME_PER_TERRITORY if mine_count + refinery_count > 0 else 0
+    currency_income = (mine_count + refinery_count) * CURRENCY_INCOME_PER_FACILITY
     currency_upkeep = stationed_fighters * FIGHTER_CURRENCY_UPKEEP
     return {
         "minerals_per_tick": minerals_per_tick,

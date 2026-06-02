@@ -16,32 +16,75 @@ function useCountdown(targetMs) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+function FlowRow({ label, value, positive, zero }) {
+  const color = zero ? 'var(--text-muted)'
+    : positive ? 'var(--teal)' : 'var(--danger)'
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{zero ? '0' : value}</span>
+    </div>
+  )
+}
+
+function FlowCard({ label, accent, rows, net, runway }) {
+  const netSign = net >= 0 ? '+' : ''
+  const netColor = net >= 0 ? 'var(--teal)' : 'var(--danger)'
+  return (
+    <Card>
+      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: 12 }}>
+        {label} / tick
+      </div>
+      <div>
+        {rows.map((r, i) => <FlowRow key={i} {...r} />)}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingTop: 8, marginTop: 2 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Net</span>
+        <div style={{ textAlign: 'right' }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: netColor, fontVariantNumeric: 'tabular-nums' }}>
+            {netSign}{net}
+          </span>
+          {runway && (
+            <span style={{ fontSize: 11, color: 'var(--danger)', marginLeft: 8 }}>
+              empty in {runway} tick{runway !== 1 ? 's' : ''} ({Math.round(runway * 2)}h)
+            </span>
+          )}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 export default function Economy() {
   const [nation, setNation] = useState(null)
   const [facilities, setFacilities] = useState([])
   const [territories, setTerritories] = useState([])
   const [lastTickAt, setLastTickAt] = useState(null)
   const [population, setPopulation] = useState(null)
+  const [flow, setFlow] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
-    const [nRes, fRes, tRes, eRes, pRes] = await Promise.all([
+    const [nRes, fRes, tRes, eRes, pRes, flowRes] = await Promise.all([
       fetch('/api/nations/mine', { credentials: 'include' }),
       fetch('/api/facilities', { credentials: 'include' }),
       fetch('/api/nations/mine/territories', { credentials: 'include' }),
       fetch('/api/economy/last-tick', { credentials: 'include' }),
       fetch('/api/economy/population', { credentials: 'include' }),
+      fetch('/api/economy/flow', { credentials: 'include' }),
     ])
-    const [n, f, t, e, p] = await Promise.all([
+    const [n, f, t, e, p, fl] = await Promise.all([
       nRes.json(), fRes.json(), tRes.json(),
       eRes.ok ? eRes.json() : null,
       pRes.ok ? pRes.json() : null,
+      flowRes.ok ? flowRes.json() : null,
     ])
     setNation(n)
     setFacilities(f)
     setTerritories(t)
     if (e?.processed_at) setLastTickAt(new Date(e.processed_at).getTime())
     if (p) setPopulation(p)
+    if (fl) setFlow(fl)
     setLoading(false)
   }, [])
 
@@ -63,8 +106,22 @@ export default function Economy() {
     return { ...t, minerals_per_tick: minerals, fuel_per_tick: fuel, pop_cap }
   })
 
-  const totalMineralsPerTick = byTerritory.reduce((s, t) => s + t.minerals_per_tick, 0)
-  const totalFuelPerTick = byTerritory.reduce((s, t) => s + t.fuel_per_tick, 0)
+  const totalMineralsPerTick = flow?.minerals?.production_per_tick
+    ?? byTerritory.reduce((s, t) => s + t.minerals_per_tick, 0)
+  const totalFuelPerTick = flow?.fuel?.production_per_tick
+    ?? byTerritory.reduce((s, t) => s + t.fuel_per_tick, 0)
+
+  const fuelNet = flow?.fuel?.net_per_tick ?? null
+  const fuelNetSign = fuelNet === null ? '' : fuelNet >= 0 ? '+' : ''
+  const fuelNetColor = fuelNet === null ? 'var(--text-muted)'
+    : fuelNet >= 0 ? 'var(--teal)' : 'var(--danger)'
+  const fuelRunway = flow?.fuel?.ticks_until_empty
+
+  const currencyNet = flow?.currency?.net_per_tick ?? null
+  const currencyNetSign = currencyNet === null ? '' : currencyNet >= 0 ? '+' : ''
+  const currencyNetColor = currencyNet === null ? 'var(--text-muted)'
+    : currencyNet >= 0 ? 'var(--teal)' : 'var(--danger)'
+  const currencyRunway = flow?.currency?.ticks_until_empty
 
   return (
     <div>
@@ -86,8 +143,27 @@ export default function Economy() {
         <StatCard
           label="Fuel"
           value={fmt(nation?.fuel)}
-          sub={`+${totalFuelPerTick} per tick`}
+          sub={
+            fuelNet !== null
+              ? (fuelRunway
+                  ? `${fuelNetSign}${fuelNet}/tick · empty in ${fuelRunway} ticks`
+                  : `${fuelNetSign}${fuelNet}/tick`)
+              : `+${totalFuelPerTick} per tick`
+          }
           accent="var(--teal)"
+          subColor={fuelNetColor}
+        />
+        <StatCard
+          label={nation?.currency_name || 'Currency'}
+          value={fmt(nation?.currency)}
+          sub={
+            currencyNet !== null
+              ? (currencyRunway
+                  ? `${currencyNetSign}${currencyNet}/tick · empty in ${currencyRunway} ticks`
+                  : `${currencyNetSign}${currencyNet}/tick`)
+              : undefined
+          }
+          subColor={currencyNetColor}
         />
         <StatCard
           label="Next Tick"
@@ -127,13 +203,37 @@ export default function Economy() {
         )}
       </Card>
 
-      <SectionLabel>Spending</SectionLabel>
-      <Card>
-        <EmptyState
-          title="No active spending"
-          body="Fleet upkeep and infrastructure maintenance costs will appear here."
-        />
-      </Card>
+      <SectionLabel>Resource Flow</SectionLabel>
+      {flow ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <FlowCard
+            label="Fuel"
+            accent="var(--teal)"
+            rows={[
+              { label: 'Refineries', value: `+${flow.fuel.production_per_tick}`, positive: true, zero: flow.fuel.production_per_tick === 0 },
+              { label: `Fleet upkeep (${flow.fuel.fleet_count_out_of_dock} fighters out of dock)`, value: `-${flow.fuel.fleet_upkeep_per_tick}`, positive: false, zero: flow.fuel.fleet_upkeep_per_tick === 0 },
+              { label: `Logistics (${flow.fuel.territory_count} territories)`, value: `-${flow.fuel.logistics_upkeep_per_tick}`, positive: false, zero: flow.fuel.logistics_upkeep_per_tick === 0 },
+            ]}
+            net={flow.fuel.net_per_tick}
+            runway={flow.fuel.ticks_until_empty}
+          />
+          <FlowCard
+            label={nation?.currency_name || 'Currency'}
+            accent="var(--amber)"
+            rows={[
+              { label: `Active facilities (${flow.currency.income_facility_count} mines/refineries)`, value: `+${flow.currency.income_per_tick}`, positive: true },
+              { label: `Fighter upkeep (${flow.currency.total_fighters} fighters)`, value: `-${flow.currency.fighter_upkeep_per_tick}`, positive: false, zero: flow.currency.fighter_upkeep_per_tick === 0 },
+              { label: `Territory upkeep (${flow.currency.territory_count}² × 10)`, value: `-${flow.currency.territory_upkeep_per_tick}`, positive: false, zero: flow.currency.territory_upkeep_per_tick === 0 },
+            ]}
+            net={flow.currency.net_per_tick}
+            runway={flow.currency.ticks_until_empty}
+          />
+        </div>
+      ) : (
+        <Card>
+          <EmptyState title="No flow data" body="Colonize territories to see resource flow." />
+        </Card>
+      )}
     </div>
   )
 }

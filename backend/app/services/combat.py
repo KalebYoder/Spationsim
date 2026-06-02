@@ -11,7 +11,7 @@ def resolve_combat_tick(
     Resolve one tick of fleet combat.  Returns (attacker_losses, defender_losses).
 
     Damage model per side each tick:
-      raw_damage      = firing_count × attack
+      raw_damage      = firing_count × firepower
       shield_absorbed = target_count × shields
       net_damage      = max(0, raw_damage − shield_absorbed)
       losses          = max(1, round(net_damage / structural_integrity))
@@ -28,7 +28,7 @@ def resolve_combat_tick(
         target_count: int,
         target_stats: dict,
     ) -> int:
-        raw = firing_count * firing_stats["attack"]
+        raw = firing_count * firing_stats["firepower"]
         absorbed = target_count * target_stats["shields"]
         net = max(0, raw - absorbed)
         if net == 0:

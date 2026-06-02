@@ -76,11 +76,11 @@ def manufacture_probes(
     has_factory = (
         db.query(Infrastructure)
         .join(Territory, Infrastructure.territory_id == Territory.id)
-        .filter(Territory.nation_id == nation.id, Infrastructure.type == "probe_factory")
+        .filter(Territory.nation_id == nation.id, Infrastructure.type == "shipyard")
         .first()
     )
     if not has_factory:
-        raise HTTPException(status_code=409, detail="You need a probe factory to manufacture probes")
+        raise HTTPException(status_code=409, detail="You need a shipyard to manufacture probes")
 
     mineral_cost = PROBE_STATS["manufacture_cost_minerals"] * body.quantity
     fuel_cost = PROBE_STATS["manufacture_cost_fuel"] * body.quantity

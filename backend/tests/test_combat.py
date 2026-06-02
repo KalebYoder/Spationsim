@@ -2,7 +2,7 @@
 Tests for fleet combat tick resolution.
 
 Damage model:
-  raw_damage      = firing_count × attack
+  raw_damage      = firing_count × firepower
   shield_absorbed = target_count × shields
   net_damage      = max(0, raw_damage − shield_absorbed)
   losses          = max(1, round(net_damage / structural_integrity))
@@ -13,10 +13,10 @@ Both sides fire simultaneously.
 from app.services.combat import resolve_combat_tick
 
 # Canonical unit matching UNIT_STATS["starfighter"]
-SF = {"attack": 2, "shields": 1, "structural_integrity": 5}
+SF = {"firepower": 2, "shields": 1, "structural_integrity": 5}
 
 # Heavier unit for cross-type tests
-HC = {"attack": 8, "shields": 4, "structural_integrity": 20}
+HC = {"firepower": 8, "shields": 4, "structural_integrity": 20}
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ def test_heavy_cruiser_vs_heavy_cruiser_equal_forces():
 
 
 def test_zero_shields_all_damage_reaches_hull():
-    no_shield = {"attack": 2, "shields": 0, "structural_integrity": 5}
+    no_shield = {"firepower": 2, "shields": 0, "structural_integrity": 5}
     # 100 × 2 = 200 raw; 0 absorbed; 200 net; round(200/5) = 40
     a_losses, d_losses = resolve_combat_tick(100, no_shield, 100, no_shield)
     assert a_losses == 40
@@ -200,15 +200,15 @@ def test_cruisers_vs_fighters_exact_values():
 
 
 def test_high_structural_integrity_reduces_losses():
-    tanky = {"attack": 2, "shields": 0, "structural_integrity": 20}
-    fragile = {"attack": 2, "shields": 0, "structural_integrity": 5}
+    tanky = {"firepower": 2, "shields": 0, "structural_integrity": 20}
+    fragile = {"firepower": 2, "shields": 0, "structural_integrity": 5}
     _, d_losses_tanky = resolve_combat_tick(100, fragile, 100, tanky)
     _, d_losses_fragile = resolve_combat_tick(100, fragile, 100, fragile)
     assert d_losses_tanky < d_losses_fragile
 
 
 def test_high_attack_increases_losses():
-    strong = {"attack": 10, "shields": 1, "structural_integrity": 5}
+    strong = {"firepower": 10, "shields": 1, "structural_integrity": 5}
     _, d_losses_strong = resolve_combat_tick(100, strong, 100, SF)
     _, d_losses_normal = resolve_combat_tick(100, SF, 100, SF)
     assert d_losses_strong > d_losses_normal

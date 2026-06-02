@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useNation } from '../hooks/useNation'
 import { diploColor } from '../hooks/useDiplomacy'
 import { PageHeader, Card, SectionLabel, Badge, Btn } from '../components/ui'
@@ -260,6 +260,118 @@ function FriendSection({ status, requestedBy, myNationId, targetNationId, onActi
   )
 }
 
+function fmtDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function WarHistory({ nationId }) {
+  const [open, setOpen] = useState(false)
+  const [wars, setWars] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const toggle = () => {
+    setOpen(o => {
+      if (!o && wars === null) {
+        setLoading(true)
+        fetch(`/api/nations/${nationId}/wars`, { credentials: 'include' })
+          .then(r => r.ok ? r.json() : Promise.reject())
+          .then(d => { setWars(d); setLoading(false) })
+          .catch(() => { setError('Failed to load war history'); setLoading(false) })
+      }
+      return !o
+    })
+  }
+
+  return (
+    <div>
+      <SectionLabel>War History</SectionLabel>
+      <Card style={{ padding: 0 }}>
+        <button
+          onClick={toggle}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '14px 20px',
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            color: 'var(--text-secondary)',
+            fontSize: 13,
+            borderBottom: open ? '1px solid var(--border)' : 'none',
+          }}
+        >
+          <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>View Past Wars</span>
+          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{open ? '▲' : '▼'}</span>
+        </button>
+
+        {open && (
+          <div style={{ padding: '12px 20px' }}>
+            {loading && <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading…</p>}
+            {error && <p style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</p>}
+            {wars && wars.length === 0 && (
+              <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No war history.</p>
+            )}
+            {wars && wars.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {wars.map((w, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 14px',
+                      background: 'var(--bg-hover)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: `1px solid ${w.is_active ? 'rgba(192,114,106,0.3)' : 'var(--border)'}`,
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {w.is_active && (
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                            color: WAR_STYLE.color, letterSpacing: '0.08em',
+                          }}>
+                            Active
+                          </span>
+                        )}
+                        <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+                          vs {w.opponent_name}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {fmtDate(w.declared_at)}
+                        {w.ended_at ? ` — ${fmtDate(w.ended_at)}` : w.is_active ? ' — ongoing' : ''}
+                      </span>
+                    </div>
+                    <Link
+                      to={`/nations/${nationId}/wars/${w.opponent_id}`}
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--teal)',
+                        textDecoration: 'none',
+                        padding: '5px 10px',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)',
+                      }}
+                    >
+                      View Log →
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+    </div>
+  )
+}
+
 export default function NationProfile() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -426,6 +538,8 @@ export default function NationProfile() {
           </div>
         </div>
       </Card>
+
+      <WarHistory nationId={nationId} />
     </div>
   )
 }

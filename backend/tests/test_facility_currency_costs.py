@@ -336,29 +336,3 @@ class TestShipyardCurrencyCost:
         assert float(nation.currency) == 0
 
 
-# ===========================================================================
-# 5. PROBE FACTORY BUILD — no currency cost (unchanged)
-# ===========================================================================
-
-
-class TestProbeFactoryNoCurrencyCost:
-    """probe_factory has no currency cost — currency must not change."""
-
-    def test_probe_factory_does_not_deduct_currency(
-        self, db: Session, auth_client, nation_with_territory
-    ):
-        nation, territory = nation_with_territory
-        initial_currency = float(nation.currency)
-        db.commit()
-
-        resp = auth_client.post("/api/facilities", json={
-            "territory_id": territory.id,
-            "type": "probe_factory",
-        })
-        assert resp.status_code == 201, resp.text
-
-        db.expire(nation)
-        nation = db.get(Nation, nation.id)
-        assert float(nation.currency) == initial_currency, (
-            "probe_factory must not deduct any currency"
-        )
