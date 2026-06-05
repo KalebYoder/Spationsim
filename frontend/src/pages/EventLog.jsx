@@ -12,6 +12,7 @@ const EVENT_LABELS = {
   probe_destroyed_in_enemy_territory: 'Probe destroyed in enemy territory',
   enemy_probe_detected_and_destroyed: 'Enemy probe detected and destroyed',
   colony_ship_stationed:              'Colony ship arrived',
+  dissent_threshold_crossed:          'Dissent threshold crossed',
 }
 
 function fmtDelta(val, prefix = '') {
@@ -62,6 +63,10 @@ function EventLine({ ev }) {
     detail = p.node_key ? ` — your territory at ${p.node_key}` : ''
   } else if (ev.type === 'probe_destroyed_in_enemy_territory') {
     detail = p.territory_node_key ? ` — at ${p.territory_node_key}` : ''
+  } else if (ev.type === 'dissent_threshold_crossed') {
+    const loc = p.node_key || p.territory_node_key || ''
+    const dir = p.direction === 'rising' ? 'rising' : 'falling'
+    detail = loc ? ` — ${loc} dissent ${dir} through ${p.threshold}` : ` — dissent ${dir} through ${p.threshold}`
   }
 
   const isHostile = [
@@ -69,12 +74,24 @@ function EventLine({ ev }) {
     'probe_destroyed_in_enemy_territory',
   ].includes(ev.type)
 
+  const isWarning = ev.type === 'dissent_threshold_crossed' && ev.payload?.direction === 'rising'
+  const isRecovery = ev.type === 'dissent_threshold_crossed' && ev.payload?.direction === 'falling'
+
+  const color = isHostile ? 'var(--red, #e05252)'
+    : isWarning ? 'var(--amber, #d4a017)'
+    : isRecovery ? 'var(--teal, #3eb89a)'
+    : 'var(--text-primary)'
+  const borderColor = isHostile ? 'var(--red, #e05252)'
+    : isWarning ? 'var(--amber, #d4a017)'
+    : isRecovery ? 'var(--teal, #3eb89a)'
+    : 'var(--border)'
+
   return (
     <div style={{
       fontSize: 12,
-      color: isHostile ? 'var(--red, #e05252)' : 'var(--text-primary)',
+      color,
       paddingLeft: 8,
-      borderLeft: `2px solid ${isHostile ? 'var(--red, #e05252)' : 'var(--border)'}`,
+      borderLeft: `2px solid ${borderColor}`,
       marginBottom: 4,
     }}>
       {label}{detail}

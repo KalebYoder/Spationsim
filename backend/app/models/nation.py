@@ -19,6 +19,7 @@ class Nation(Base):
     currency = Column(Numeric(12, 2), default=0, nullable=False)
     probes_reserve = Column(Integer, default=0, nullable=False)
     diplomatic_status_default = Column(String(16), default="neutral", nullable=False)
+    max_colonized_territory_count = Column(Integer, default=0, nullable=False)
 
     player = relationship("Player", back_populates="nation")
     territories = relationship("Territory", back_populates="nation", foreign_keys="Territory.nation_id")

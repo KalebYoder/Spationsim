@@ -302,7 +302,7 @@ export default function Military() {
 
   const stationedFleets = fleets.filter(f => f.status === 'stationed')
   const transitFleets = fleets.filter(f => f.status === 'in_transit')
-  const activeOpFleets = fleets.filter(f => ['pending_confirmation', 'engaged', 'holding'].includes(f.status))
+  const activeOpFleets = fleets.filter(f => ['pending_confirmation', 'engaged', 'holding', 'post_battle_choice'].includes(f.status))
   const totalUnits = fleets.reduce((s, f) => s + f.unit_count, 0)
   const stationedColonyShips = colonyShips.filter(s => s.status === 'stationed')
   const transitColonyShips = colonyShips.filter(s => s.status === 'in_transit')
@@ -522,11 +522,36 @@ export default function Military() {
                     </Btn>
                   </div>
                 )
+              } else if (f.status === 'post_battle_choice') {
+                const expiresAt = f.confirmation_expires_at ? new Date(f.confirmation_expires_at) : null
+                statusEl = (
+                  <span>
+                    <Badge color="amber">Choose action</Badge>
+                    {expiresAt && (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+                        auto-resume {expiresAt.toLocaleString()}
+                      </span>
+                    )}
+                  </span>
+                )
+                actions = (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <Btn variant="ghost" onClick={() => handleFleetAction(f.id, 'rout')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
+                      {pending === 'rout' ? '…' : 'Rout'}
+                    </Btn>
+                    <Btn variant="ghost" onClick={() => handleFleetAction(f.id, 'raid')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
+                      {pending === 'raid' ? '…' : 'Raid'}
+                    </Btn>
+                    <Btn variant="ghost" disabled title="Not yet implemented" style={{ padding: '3px 10px', fontSize: 12, opacity: 0.4 }}>
+                      Raze
+                    </Btn>
+                  </div>
+                )
               } else if (f.status === 'engaged') {
                 const hasDefenders = f.destination_has_defenders
                 statusEl = hasDefenders
                   ? <Badge color="rose">In combat</Badge>
-                  : <Badge color="teal">Undefended — draining resources</Badge>
+                  : <Badge color="teal">Undefended</Badge>
                 actions = (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {!hasDefenders && (

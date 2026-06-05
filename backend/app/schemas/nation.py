@@ -213,6 +213,7 @@ class TerritoryResponse(BaseModel):
     fuel_richness: float
     distance_from_center: int
     is_colonized: bool
+    dissent: int = 0
 
     model_config = {"from_attributes": True}
 

@@ -15,7 +15,7 @@ from ..models.player import Player
 from ..schemas.nation import NationCreateRequest, NationResponse, PublicNationResponse, TerritoryResponse
 from ..schemas.messaging import NationListItem
 from ..routers.auth import get_current_player
-from ..constants import POPULATION_START
+from ..constants import POPULATION_START, UNIT_STATS
 
 VACATION_MIN_HOURS = 48
 LOCKOUT_HOURS = 48
@@ -90,6 +90,8 @@ def create_nation(
     territory.is_colonized = True
     territory.colonized_at = datetime.now(timezone.utc)
     territory.name = body.home_planet_name
+
+    nation.max_colonized_territory_count = 1  # home territory
 
     db.add(TerritoryPopulation(
         territory_id=territory.id,
@@ -184,7 +186,7 @@ def get_territory_yields(
     db: Session = Depends(get_db),
     player: Player = Depends(get_current_player),
 ):
-    from ..services.territory_yield import compute_territory_yield
+    from ..services.territory_yield import compute_territory_yield, dissent_production_modifier
 
     nation = db.query(Nation).filter(Nation.player_id == player.id).first()
     if not nation:
@@ -225,9 +227,16 @@ def get_territory_yields(
     )
     stationed: dict[int, int] = {tid: int(cnt) for tid, cnt in fleet_rows}
 
+    dissent_map = {
+        r.territory_id: r.dissent
+        for r in db.query(TerritoryDissent).filter(TerritoryDissent.territory_id.in_(territory_ids)).all()
+    }
+
     return [
         {
             "territory_id": t.id,
+            "dissent": dissent_map.get(t.id, 0),
+            "dissent_modifier": round(dissent_production_modifier(dissent_map.get(t.id, 0)), 4),
             **compute_territory_yield(
                 territory_type=t.territory_type,
                 mineral_richness=float(t.mineral_richness),
@@ -235,6 +244,7 @@ def get_territory_yields(
                 mine_count=mine_counts.get(t.id, 0),
                 refinery_count=refinery_counts.get(t.id, 0),
                 stationed_fighters=stationed.get(t.id, 0),
+                dissent_modifier=dissent_production_modifier(dissent_map.get(t.id, 0)),
             ),
         }
         for t in territories
@@ -249,7 +259,26 @@ def get_my_territories(
     nation = db.query(Nation).filter(Nation.player_id == player.id).first()
     if not nation:
         raise HTTPException(status_code=404, detail="No nation found")
-    return db.query(Territory).filter(Territory.nation_id == nation.id).all()
+    territories = db.query(Territory).filter(Territory.nation_id == nation.id).all()
+    t_ids = [t.id for t in territories]
+    dissent_map = {
+        r.territory_id: r.dissent
+        for r in db.query(TerritoryDissent).filter(TerritoryDissent.territory_id.in_(t_ids)).all()
+    } if t_ids else {}
+    return [
+        {
+            "id": t.id,
+            "node_key": t.node_key,
+            "name": t.name,
+            "territory_type": t.territory_type,
+            "mineral_richness": float(t.mineral_richness),
+            "fuel_richness": float(t.fuel_richness),
+            "distance_from_center": t.distance_from_center,
+            "is_colonized": t.is_colonized,
+            "dissent": dissent_map.get(t.id, 0),
+        }
+        for t in territories
+    ]
 
 
 @router.get("/{nation_id}/territories", response_model=list[TerritoryResponse])
@@ -444,4 +473,233 @@ def get_war_combat_log(
         "opponent_id": opponent_id,
         "opponent_name": opponent.name,
         "events": [enrich(ev) for ev in combat_events],
+    }
+
+
+@router.get("/{nation_id}/wars/{opponent_id}/status")
+def get_war_status(
+    nation_id: int,
+    opponent_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.get(Nation, nation_id)
+    opponent = db.get(Nation, opponent_id)
+    if not nation or not opponent:
+        raise HTTPException(status_code=404, detail="Nation not found")
+
+    a_id, b_id = min(nation_id, opponent_id), max(nation_id, opponent_id)
+
+    # ── Find most recent war declaration for this pair ──────────────────────
+    declared_event = (
+        db.query(Event)
+        .filter(
+            Event.type == "war_declared",
+            or_(
+                and_(
+                    Event.payload["declaring_nation_id"].astext.cast(Integer) == a_id,
+                    Event.payload["target_nation_id"].astext.cast(Integer) == b_id,
+                ),
+                and_(
+                    Event.payload["declaring_nation_id"].astext.cast(Integer) == b_id,
+                    Event.payload["target_nation_id"].astext.cast(Integer) == a_id,
+                ),
+            ),
+        )
+        .order_by(Event.scheduled_for.desc())
+        .first()
+    )
+    if not declared_event:
+        raise HTTPException(status_code=404, detail="No war found between these nations")
+
+    declared_at = declared_event.scheduled_for
+
+    # ── Find when war actually started (war_pending → war) ──────────────────
+    started_event = (
+        db.query(Event)
+        .filter(
+            Event.type == "war_started",
+            Event.scheduled_for >= declared_at,
+            or_(
+                and_(
+                    Event.payload["nation_a"].astext.cast(Integer) == a_id,
+                    Event.payload["nation_b"].astext.cast(Integer) == b_id,
+                ),
+                and_(
+                    Event.payload["nation_a"].astext.cast(Integer) == b_id,
+                    Event.payload["nation_b"].astext.cast(Integer) == a_id,
+                ),
+            ),
+        )
+        .order_by(Event.scheduled_for.asc())
+        .first()
+    )
+    started_at = started_event.scheduled_for if started_event else None
+
+    # ── Find peace event (if war ended) ─────────────────────────────────────
+    peace_cutoff = started_at or declared_at
+    peace_event = (
+        db.query(Event)
+        .filter(
+            Event.type == "trade_accepted",
+            Event.payload["includes_peace"].astext == "true",
+            Event.scheduled_for >= peace_cutoff,
+            or_(
+                and_(
+                    Event.payload["from_nation_id"].astext.cast(Integer) == nation_id,
+                    Event.payload["to_nation_id"].astext.cast(Integer) == opponent_id,
+                ),
+                and_(
+                    Event.payload["from_nation_id"].astext.cast(Integer) == opponent_id,
+                    Event.payload["to_nation_id"].astext.cast(Integer) == nation_id,
+                ),
+            ),
+        )
+        .order_by(Event.scheduled_for.asc())
+        .first()
+    )
+    ended_at = peace_event.scheduled_for if peace_event else None
+    is_active = ended_at is None
+
+    # ── Collect combat events scoped to this war ─────────────────────────────
+    # Lower bound: when war started (or declared if still pending)
+    event_after = started_at or declared_at
+    event_before = ended_at  # None = open-ended (still ongoing)
+
+    combat_filter = [
+        Event.type.in_(["combat_round", "resources_drained_by_occupation"]),
+        Event.scheduled_for >= event_after,
+        or_(
+            and_(
+                Event.payload["attacker_nation_id"].astext.cast(Integer) == nation_id,
+                Event.payload["defender_nation_id"].astext.cast(Integer) == opponent_id,
+            ),
+            and_(
+                Event.payload["attacker_nation_id"].astext.cast(Integer) == opponent_id,
+                Event.payload["defender_nation_id"].astext.cast(Integer) == nation_id,
+            ),
+        ),
+    ]
+    if event_before:
+        combat_filter.append(Event.scheduled_for <= event_before)
+
+    combat_events = db.query(Event).filter(*combat_filter).all()
+
+    conquest_filter = [
+        Event.type == "territory_conquered",
+        Event.scheduled_for >= event_after,
+        or_(
+            and_(
+                Event.payload["attacker_nation_id"].astext.cast(Integer) == nation_id,
+                Event.payload["defender_nation_id"].astext.cast(Integer) == opponent_id,
+            ),
+            and_(
+                Event.payload["attacker_nation_id"].astext.cast(Integer) == opponent_id,
+                Event.payload["defender_nation_id"].astext.cast(Integer) == nation_id,
+            ),
+        ),
+    ]
+    if event_before:
+        conquest_filter.append(Event.scheduled_for <= event_before)
+
+    conquest_events = db.query(Event).filter(*conquest_filter).all()
+
+    # Pre-fetch territory richness for conquered territories so we can split
+    # planets (richness > 0) from void captures.
+    conquered_territory_ids = {
+        int(ev.payload["territory_id"])
+        for ev in conquest_events
+        if ev.payload.get("territory_id") is not None
+    }
+    planet_territory_ids: set[int] = set()
+    if conquered_territory_ids:
+        planet_territory_ids = {
+            t.id
+            for t in db.query(Territory.id, Territory.mineral_richness, Territory.fuel_richness)
+                       .filter(Territory.id.in_(conquered_territory_ids))
+                       .all()
+            if float(t.mineral_richness) > 0 or float(t.fuel_richness) > 0
+        }
+
+    # ── Aggregate per-nation stats ────────────────────────────────────────────
+    def _make_stats():
+        return {
+            "fighter_losses": 0,
+            "minerals_stolen": 0,
+            "fuel_stolen": 0,
+            "minerals_lost": 0,
+            "fuel_lost": 0,
+            "territories_gained": 0,
+            "territories_lost": 0,
+            "planets_gained": 0,
+            "planets_lost": 0,
+        }
+
+    stats = {nation_id: _make_stats(), opponent_id: _make_stats()}
+
+    for ev in combat_events:
+        p = ev.payload
+        att = int(p["attacker_nation_id"])
+        dfn = int(p["defender_nation_id"])
+        if ev.type == "combat_round":
+            if att in stats:
+                stats[att]["fighter_losses"] += int(p.get("attacker_losses", 0))
+            if dfn in stats:
+                stats[dfn]["fighter_losses"] += int(p.get("defender_losses", 0))
+        elif ev.type == "resources_drained_by_occupation":
+            min_d = int(p.get("minerals_drained", 0))
+            fuel_d = int(p.get("fuel_drained", 0))
+            if att in stats:
+                stats[att]["minerals_stolen"] += min_d
+                stats[att]["fuel_stolen"] += fuel_d
+            if dfn in stats:
+                stats[dfn]["minerals_lost"] += min_d
+                stats[dfn]["fuel_lost"] += fuel_d
+
+    for ev in conquest_events:
+        p = ev.payload
+        att = int(p["attacker_nation_id"])
+        dfn = int(p["defender_nation_id"])
+        tid = int(p.get("territory_id", 0))
+        is_planet = tid in planet_territory_ids
+        if att in stats:
+            stats[att]["territories_gained"] += 1
+            if is_planet:
+                stats[att]["planets_gained"] += 1
+        if dfn in stats:
+            stats[dfn]["territories_lost"] += 1
+            if is_planet:
+                stats[dfn]["planets_lost"] += 1
+
+    # ── Compute war cost (fighter losses × manufacture cost) ─────────────────
+    sf = UNIT_STATS["starfighter"]
+    for nid, s in stats.items():
+        losses = s["fighter_losses"]
+        s["war_cost_minerals"] = losses * sf["manufacture_cost_minerals"]
+        s["war_cost_fuel"] = losses * sf["manufacture_cost_fuel"]
+        s["war_cost_currency"] = losses * sf["manufacture_cost_currency"]
+
+    # ── Duration ─────────────────────────────────────────────────────────────
+    now = datetime.now(timezone.utc)
+    if started_at:
+        end = ended_at or now
+        elapsed_seconds = int((end - started_at).total_seconds())
+    else:
+        elapsed_seconds = None
+
+    declaring_id = int(declared_event.payload["declaring_nation_id"])
+
+    return {
+        "nation_id": nation_id,
+        "nation_name": nation.name,
+        "opponent_id": opponent_id,
+        "opponent_name": opponent.name,
+        "declared_at": declared_at.isoformat(),
+        "declared_by_nation_id": declaring_id,
+        "started_at": started_at.isoformat() if started_at else None,
+        "ended_at": ended_at.isoformat() if ended_at else None,
+        "is_active": is_active,
+        "elapsed_seconds": elapsed_seconds,
+        "nation_stats": stats[nation_id],
+        "opponent_stats": stats[opponent_id],
     }

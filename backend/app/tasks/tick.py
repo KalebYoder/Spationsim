@@ -7,6 +7,7 @@ from ..models.colony_ship import ColonyShip
 from ..models.fleet import Fleet
 from ..models.nation import Nation
 from ..models.infrastructure import Infrastructure
+from ..models.player import Player
 from ..models.territory import Territory
 from ..models.resource_log import ResourceLog
 from ..models.event import Event
@@ -20,12 +21,11 @@ from ..models.probe_data import ProbeData
 from ..models.probe_visibility import ProbeVisibility
 from ..services.combat import resolve_combat_tick
 from ..services.logistics import compute_logistics_fuel_cost
-from ..services.territory_yield import compute_territory_yield
+from ..services.territory_yield import compute_territory_yield, dissent_production_modifier
 from ..constants import (
     POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER, PROBE_VISION_RADIUS,
     UNIT_STATS, FACILITY_COSTS, DEMOLISH_REFUND_FRACTION, LOGISTICS_FUEL_K,
     TERRITORY_UPKEEP_K,
-    DISSENT_CURVE_EXPONENT,
     DISSENT_WAR_AGGRESSOR, DISSENT_WAR_DEFENDER,
     DISSENT_FLEET_HOLDING, DISSENT_FLEET_ENGAGED, DISSENT_CONQUEST_RESET,
     DISSENT_DECAY_PEACE, DISSENT_DECAY_WAR, DISSENT_DECAY_OCCUPIED,
@@ -75,12 +75,6 @@ def _hex_dist(q1, r1, q2, r2):
     return max(abs(dq), abs(dr), abs(dq + dr))
 
 
-def _dissent_production_modifier(dissent: int) -> float:
-    """Continuous power-curve penalty: no effect below 25, 50% at 75, zero at 100."""
-    t = max(0.0, (dissent - 25) / 75.0)
-    return max(0.0, 1.0 - t ** DISSENT_CURVE_EXPONENT)
-
-
 _DISSENT_THRESHOLDS = (25, 50, 75, 100)
 
 
@@ -103,6 +97,7 @@ def run_tick():
         for row in pending_wars:
             row.status = "war"
             row.war_starts_at = None
+            row.war_started_at = tick_at
             row.updated_at = tick_at
             db.add(Event(
                 type="war_started",
@@ -124,13 +119,16 @@ def run_tick():
             for row in db.query(TerritoryDissent).all()
         }
 
-        # Build war-role lookup: nation_id -> "aggressor" | "defender" | None
-        war_role: dict[int, str] = {}
+        # Build per-nation dissent accumulation from all active wars.
+        # A nation can be aggressor in one war and defender in another simultaneously;
+        # contributions are summed rather than taking the first-seen role.
+        war_dissent_delta: dict[int, int] = {}
+        at_war: set[int] = set()
         for war_row in db.query(Diplomacy).filter(Diplomacy.status == "war").all():
             for nid in (war_row.nation_a, war_row.nation_b):
-                if nid not in war_role:
-                    role = "aggressor" if war_row.declared_by == nid else "defender"
-                    war_role[nid] = role
+                contribution = DISSENT_WAR_AGGRESSOR if war_row.declared_by == nid else DISSENT_WAR_DEFENDER
+                war_dissent_delta[nid] = war_dissent_delta.get(nid, 0) + contribution
+                at_war.add(nid)
 
         for nation in nations:
             territory_ids = [
@@ -154,7 +152,7 @@ def run_tick():
             minerals_delta = 0
             fuel_delta = 0
             for ftype, t_id, mineral_richness, fuel_richness, territory_type in facilities:
-                modifier = _dissent_production_modifier(dissent_map.get(t_id, 0))
+                modifier = dissent_production_modifier(dissent_map.get(t_id, 0))
                 if ftype == "mine":
                     r = float(mineral_richness)
                     if territory_type == "anomaly":
@@ -498,6 +496,16 @@ def run_tick():
                     status="processed",
                 ))
 
+        # Return expired post_battle_choice fleets to engaged so they fight this tick
+        expired_pbc = (
+            db.query(Fleet)
+            .filter(Fleet.status == "post_battle_choice", Fleet.confirmation_expires_at <= tick_at)
+            .all()
+        )
+        for fleet in expired_pbc:
+            fleet.status = "engaged"
+            fleet.confirmation_expires_at = None
+
         # Process engaged fleets (combat resolution per tick)
         engaged_fleets = (
             db.query(Fleet)
@@ -573,65 +581,20 @@ def run_tick():
                         status="processed",
                     ))
                     db.delete(fleet)
-            else:
-                # No defenders — drain a fraction of this territory's production.
-                # Drain fraction = min(1.0, fleet_size × 0.05): each fighter intercepts
-                # 5% of production, capped at 100% with 20+ fighters.
-                defender_nation = db.get(Nation, dest.nation_id)
-                if defender_nation:
-                    territory_facilities = (
-                        db.query(Infrastructure.type)
-                        .filter(
-                            Infrastructure.territory_id == dest.id,
-                            Infrastructure.type.in_(["mine", "refinery"]),
-                            Infrastructure.status == "active",
-                        )
-                        .all()
-                    )
-                    mine_count = sum(1 for (t,) in territory_facilities if t == "mine")
-                    refinery_count = sum(1 for (t,) in territory_facilities if t == "refinery")
-                    production = compute_territory_yield(
-                        territory_type=dest.territory_type,
-                        mineral_richness=float(dest.mineral_richness),
-                        fuel_richness=float(dest.fuel_richness),
-                        mine_count=mine_count,
-                        refinery_count=refinery_count,
-                    )
-                    drain_fraction = min(1.0, fleet.unit_count * 0.05)
-                    minerals_drain = min(
-                        round(production["minerals_per_tick"] * drain_fraction),
-                        max(0, int(defender_nation.minerals)),
-                    )
-                    fuel_drain = min(
-                        round(production["fuel_per_tick"] * drain_fraction),
-                        max(0, int(defender_nation.fuel)),
-                    )
-                    defender_nation.minerals = max(0, defender_nation.minerals - minerals_drain)
-                    defender_nation.fuel = max(0, defender_nation.fuel - fuel_drain)
-                    db.add(Event(
-                        type="resources_drained_by_occupation",
-                        payload={
-                            "fleet_id": fleet.id,
-                            "attacker_nation_id": fleet.nation_id,
-                            "defender_nation_id": dest.nation_id,
-                            "territory_id": dest.id,
-                            "minerals_drained": minerals_drain,
-                            "fuel_drained": fuel_drain,
-                            "tick_at": tick_at.isoformat(),
-                        },
-                        scheduled_for=tick_at,
-                        processed_at=tick_at,
-                        status="processed",
-                    ))
+                else:
+                    # Attacker survived — pause for post-battle choice (Rout/Raid/Raze).
+                    # Fleet resumes combat next tick if no choice made within 1 tick window.
+                    fleet.status = "post_battle_choice"
+                    fleet.confirmation_expires_at = tick_at + timedelta(hours=2)
 
-        # Apply attrition to holding fleets: max(1, round(unit_count * 0.01)) losses per tick
+        # Apply attrition to holding fleets: max(1, round(unit_count * 0.025)) losses per tick
         holding_fleets = (
             db.query(Fleet)
             .filter(Fleet.status == "holding")
             .all()
         )
         for fleet in holding_fleets:
-            losses = max(1, round(fleet.unit_count * 0.01))
+            losses = max(1, round(fleet.unit_count * 0.025))
             remaining = fleet.unit_count - losses
             if remaining <= 0:
                 db.add(Event(
@@ -664,13 +627,12 @@ def run_tick():
 
         # ── Dissent update ────────────────────────────────────────────────────
         # Build per-territory fleet-presence map from current fleet statuses.
-        # holding/engaged fleets on enemy territory raise dissent; we look at
-        # destination_territory for in-transit-style and origin_territory for
-        # stationed-on-enemy and holding/engaged.
+        # holding/engaged fleets sit at destination_territory (their launch point
+        # is origin_territory, which is the attacker's own colony — not the target).
         holding_on: set[int] = set()   # territory_ids with a holding enemy fleet
         engaged_on: set[int] = set()   # territory_ids with an engaged enemy fleet
         for fleet in db.query(Fleet).filter(Fleet.status.in_(["holding", "engaged"])).all():
-            dest = db.get(Territory, fleet.origin_territory)
+            dest = db.get(Territory, fleet.destination_territory)
             if dest and dest.nation_id and dest.nation_id != fleet.nation_id:
                 if fleet.status == "holding":
                     holding_on.add(dest.id)
@@ -685,16 +647,29 @@ def run_tick():
             ).all()
         }
 
-        # Rebuild war_role with fresh data (war_pending may have promoted above)
-        war_role_now: dict[int, str] = {}
+        # Rebuild war dissent delta with fresh data (war_pending may have promoted above).
+        war_dissent_delta = {}
+        at_war = set()
         for war_row in db.query(Diplomacy).filter(Diplomacy.status == "war").all():
             for nid in (war_row.nation_a, war_row.nation_b):
-                if nid not in war_role_now:
-                    war_role_now[nid] = "aggressor" if war_row.declared_by == nid else "defender"
+                contribution = DISSENT_WAR_AGGRESSOR if war_row.declared_by == nid else DISSENT_WAR_DEFENDER
+                war_dissent_delta[nid] = war_dissent_delta.get(nid, 0) + contribution
+                at_war.add(nid)
+
+        # Vacation-mode nations: tick is frozen, dissent must not accumulate or decay
+        vacation_nation_ids: set[int] = {
+            n_id for (n_id,) in
+            db.query(Nation.id)
+            .join(Player, Nation.player_id == Player.id)
+            .filter(Player.vacation_mode.is_(True))
+            .all()
+        }
 
         # Process dissent for every colonized territory
         for t in db.query(Territory).filter(Territory.is_colonized == True).all():
             if t.nation_id is None:
+                continue
+            if t.nation_id in vacation_nation_ids:
                 continue
 
             row = db.query(TerritoryDissent).filter(TerritoryDissent.territory_id == t.id).first()
@@ -705,12 +680,8 @@ def run_tick():
             old_dissent = row.dissent
             delta = 0
 
-            # War-wide penalty (aggressor/defender)
-            role = war_role_now.get(t.nation_id)
-            if role == "aggressor":
-                delta += DISSENT_WAR_AGGRESSOR
-            elif role == "defender":
-                delta += DISSENT_WAR_DEFENDER
+            # War-wide penalty: sum of contributions from every active war this nation is in
+            delta += war_dissent_delta.get(t.nation_id, 0)
 
             # Fleet-presence bonus
             occupied = t.id in holding_on or t.id in engaged_on
@@ -724,7 +695,7 @@ def run_tick():
                 delta += DISSENT_DECAY_OCCUPIED
                 if t.id in office_territories:
                     delta -= DISSENT_OFFICE_BONUS_OCCUPIED
-            elif role is not None:
+            elif t.nation_id in at_war:
                 delta += DISSENT_DECAY_WAR
                 if t.id in office_territories:
                     delta -= DISSENT_OFFICE_BONUS_NORMAL

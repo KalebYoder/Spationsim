@@ -1,3 +1,4 @@
+import random
 from datetime import datetime, timezone, timedelta
 from math import ceil
 from fastapi import APIRouter, Depends, HTTPException
@@ -535,12 +536,15 @@ def conquer_territory(
         status="processed",
     ))
 
+    db.flush()
     colonized_count = db.query(Territory).filter(
         Territory.nation_id == nation.id,
         Territory.is_colonized == True,
     ).count()
     if colonized_count >= 2:
         _apply_tutorial_action(nation.id, "colonize_territory", db)
+    if colonized_count > (nation.max_colonized_territory_count or 0):
+        nation.max_colonized_territory_count = colonized_count
 
     db.commit()
     db.refresh(dest)
@@ -551,6 +555,167 @@ def conquer_territory(
         nation_id=dest.nation_id,
         colonized_at=dest.colonized_at.isoformat(),
     )
+
+
+@router.post("/fleets/{fleet_id}/rout", response_model=FleetResponse)
+def rout_fleet(
+    fleet_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    fleet = db.get(Fleet, fleet_id)
+    if not fleet or fleet.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
+
+    if fleet.status != "post_battle_choice":
+        raise HTTPException(status_code=409, detail="Fleet must be in post_battle_choice state to rout")
+
+    dest = db.get(Territory, fleet.destination_territory)
+    if not dest:
+        raise HTTPException(status_code=404, detail="Fleet has no destination territory")
+
+    now = datetime.now(timezone.utc)
+    from sqlalchemy import cast, Integer as SAInt
+
+    last_combat = (
+        db.query(Event)
+        .filter(
+            Event.type == "combat_round",
+            cast(Event.payload["fleet_id"].astext, SAInt) == fleet.id,
+        )
+        .order_by(Event.id.desc())
+        .first()
+    )
+
+    bonus_damage = 0
+    if last_combat and last_combat.payload:
+        defender_losses = last_combat.payload.get("defender_losses", 0)
+        bonus_damage = max(0, int(defender_losses * 0.25))
+
+    defender_fleet = (
+        db.query(Fleet)
+        .filter(
+            Fleet.nation_id == dest.nation_id,
+            Fleet.origin_territory == dest.id,
+            Fleet.status == "stationed",
+        )
+        .first()
+    ) if dest.nation_id else None
+
+    actual_damage = 0
+    if defender_fleet and defender_fleet.unit_count > 0 and bonus_damage > 0:
+        actual_damage = min(bonus_damage, defender_fleet.unit_count)
+        defender_fleet.unit_count -= actual_damage
+        if defender_fleet.unit_count == 0:
+            db.delete(defender_fleet)
+
+    fleet.status = "engaged"
+    fleet.confirmation_expires_at = None
+
+    db.add(Event(
+        type="rout_applied",
+        payload={
+            "fleet_id": fleet.id,
+            "attacker_nation_id": nation.id,
+            "defender_nation_id": dest.nation_id,
+            "territory_id": dest.id,
+            "bonus_damage": actual_damage,
+            "applied_at": now.isoformat(),
+        },
+        scheduled_for=now,
+        processed_at=now,
+        status="processed",
+    ))
+
+    db.commit()
+    db.refresh(fleet)
+    return _fleet_response(fleet, db)
+
+
+@router.post("/fleets/{fleet_id}/raid", response_model=FleetResponse)
+def raid_fleet(
+    fleet_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    fleet = db.get(Fleet, fleet_id)
+    if not fleet or fleet.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
+
+    if fleet.status != "post_battle_choice":
+        raise HTTPException(status_code=409, detail="Fleet must be in post_battle_choice state to raid")
+
+    dest = db.get(Territory, fleet.destination_territory)
+    if not dest or not dest.nation_id or dest.nation_id == nation.id:
+        raise HTTPException(status_code=409, detail="No valid enemy territory at fleet destination")
+
+    defender_nation = db.get(Nation, dest.nation_id)
+    if not defender_nation:
+        raise HTTPException(status_code=404, detail="Defender nation not found")
+
+    now = datetime.now(timezone.utc)
+    firepower = fleet.unit_count * UNIT_STATS["starfighter"]["firepower"]
+
+    minerals_stolen = min(
+        random.uniform(0.5 * firepower, 1.5 * firepower),
+        float(defender_nation.minerals),
+    )
+    fuel_stolen = min(
+        random.uniform(0.5 * firepower, 1.5 * firepower),
+        float(defender_nation.fuel),
+    )
+    currency_stolen = min(
+        random.uniform(0.5 * firepower, 1.5 * firepower),
+        float(defender_nation.currency),
+    )
+
+    defender_nation.minerals -= minerals_stolen
+    defender_nation.fuel -= fuel_stolen
+    defender_nation.currency -= currency_stolen
+    nation.minerals += minerals_stolen
+    nation.fuel += fuel_stolen
+    nation.currency += currency_stolen
+
+    fleet.status = "engaged"
+    fleet.confirmation_expires_at = None
+
+    db.add(Event(
+        type="raid_applied",
+        payload={
+            "fleet_id": fleet.id,
+            "attacker_nation_id": nation.id,
+            "defender_nation_id": dest.nation_id,
+            "territory_id": dest.id,
+            "minerals_stolen": round(minerals_stolen, 2),
+            "fuel_stolen": round(fuel_stolen, 2),
+            "currency_stolen": round(currency_stolen, 2),
+            "applied_at": now.isoformat(),
+        },
+        scheduled_for=now,
+        processed_at=now,
+        status="processed",
+    ))
+
+    db.commit()
+    db.refresh(fleet)
+    return _fleet_response(fleet, db)
+
+
+@router.post("/fleets/{fleet_id}/raze", response_model=FleetResponse)
+def raze_fleet(
+    fleet_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    raise HTTPException(status_code=409, detail="Raze is not yet implemented")
 
 
 @router.post("/fleets/{fleet_id}/claim", response_model=ClaimTerritoryResponse)
@@ -622,12 +787,15 @@ def claim_territory(
             status="processed",
         ))
 
+    db.flush()
     colonized_count = db.query(Territory).filter(
         Territory.nation_id == nation.id,
         Territory.is_colonized == True,
     ).count()
     if colonized_count >= 2:
         _apply_tutorial_action(nation.id, "colonize_territory", db)
+    if colonized_count > (nation.max_colonized_territory_count or 0):
+        nation.max_colonized_territory_count = colonized_count
 
     db.commit()
     db.refresh(territory)
@@ -828,9 +996,13 @@ def load_colony_ship(
     pop_row = db.query(TerritoryPopulation).filter(
         TerritoryPopulation.territory_id == territory.id
     ).first()
-    available_pop = pop_row.current if pop_row else 0
+    total_pop = pop_row.current if pop_row else 0
+    assigned_pop = db.query(sqlfunc.coalesce(sqlfunc.sum(Infrastructure.population_assigned), 0)).filter(
+        Infrastructure.territory_id == territory.id
+    ).scalar()
+    available_pop = total_pop - assigned_pop
     if available_pop <= 0:
-        raise HTTPException(status_code=409, detail="Territory has no population to load")
+        raise HTTPException(status_code=409, detail="Territory has no unassigned population to load")
 
     quantity = min(body.quantity, space_remaining, available_pop)
     if quantity <= 0:

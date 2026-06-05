@@ -167,6 +167,39 @@ function TerritoryCard({ territory, flagColor, onRenamed, yieldData, highlightPr
       {open && (
         <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
+          {yieldData && (yieldData.dissent ?? 0) > 0 && (
+            <div style={{
+              background: 'rgba(212, 160, 23, 0.08)',
+              border: '1px solid rgba(212, 160, 23, 0.3)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '10px 14px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--amber, #d4a017)' }}>
+                    Dissent {yieldData.dissent}/100
+                  </span>
+                  {(yieldData.dissent ?? 0) > 25 && (
+                    <span style={{ fontSize: 12, color: 'var(--amber, #d4a017)', marginLeft: 12 }}>
+                      Production penalty: {Math.round((1 - (yieldData.dissent_modifier ?? 1)) * 100)}%
+                    </span>
+                  )}
+                </div>
+                <div style={{
+                  width: 120, height: 6, background: 'var(--bg-hover)', borderRadius: 3, overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${yieldData.dissent}%`,
+                    background: yieldData.dissent >= 75 ? 'var(--red, #e05252)' : 'var(--amber, #d4a017)',
+                    borderRadius: 3,
+                    transition: 'width 0.3s',
+                  }} />
+                </div>
+              </div>
+            </div>
+          )}
+
           {yieldData && (
             <div style={highlightProduction ? {
               outline: '1px solid var(--amber)',

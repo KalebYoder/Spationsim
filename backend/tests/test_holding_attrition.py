@@ -1,20 +1,21 @@
 """
 Test suite for holding-fleet attrition.
 
-Each tick a fleet with status="holding" loses max(1, round(unit_count × 0.01)) units.
+Each tick a fleet with status="holding" loses max(1, round(unit_count × 0.025)) units.
 The minimum loss is always 1 — a holding fleet cannot park indefinitely.
 A fleet that reaches 0 is deleted and a destroyed event is fired.
 Fleets in any other status are not affected.
 
 Attrition rate reference (losses per tick):
-  1–149 units  →  1 loss/tick
-  150–249      →  2 losses/tick   (round(1.5)=2 Python banker's rounding)
-  250–349      →  3 losses/tick
+  1–59 units   →  1 loss/tick   (minimum floor; round(0.5)=0 banker's rounding)
+  60–100       →  2 losses/tick  (round(1.5)=2, round(2.5)=2 banker's rounding)
+  101–139      →  3 losses/tick
+  140–180      →  4 losses/tick  (round(3.5)=4, round(4.5)=4 banker's rounding)
   ...
 
 Covers:
   1. Any holding fleet loses at least 1 unit per tick
-  2. Large fleets lose proportionally more (1% rounded)
+  2. Large fleets lose proportionally more (2.5% rounded)
   3. Fleet reaching 0 is deleted and a "fleet_destroyed_by_attrition" event fires
   4. Attrition event logged with correct payload
   5. Non-holding fleets (stationed, in_transit, pending_confirmation) are untouched
@@ -128,7 +129,7 @@ def other_nation(db, other_player):
 class TestMinimumAttrition:
 
     def test_single_unit_holding_fleet_loses_1(self, db, test_nation):
-        """1 unit: max(1, round(0.01)) = 1. Fleet is deleted in one tick."""
+        """1 unit: max(1, round(0.025)) = max(1, 0) = 1. Fleet is deleted in one tick."""
         home = _territory(db, "ha_m1_h", test_nation.id)
         dest = _territory(db, "ha_m1_d")
         fleet = _holding_fleet(db, test_nation.id, home.id, dest.id, units=1)
@@ -144,7 +145,7 @@ class TestMinimumAttrition:
             s.close()
 
     def test_small_fleet_loses_1_per_tick(self, db, test_nation):
-        """20 units: max(1, round(0.2)) = 1. Minimum kicks in."""
+        """20 units: max(1, round(0.5)) = max(1, 0) = 1. Minimum kicks in (banker's rounding)."""
         home = _territory(db, "ha_m2_h", test_nation.id)
         dest = _territory(db, "ha_m2_d")
         fleet = _holding_fleet(db, test_nation.id, home.id, dest.id, units=20)
@@ -160,7 +161,7 @@ class TestMinimumAttrition:
             s.close()
 
     def test_50_unit_fleet_loses_1(self, db, test_nation):
-        """50 units: max(1, round(0.5)) = max(1, 0) = 1."""
+        """50 units: max(1, round(1.25)) = 1."""
         home = _territory(db, "ha_m3_h", test_nation.id)
         dest = _territory(db, "ha_m3_d")
         fleet = _holding_fleet(db, test_nation.id, home.id, dest.id, units=50)
@@ -182,8 +183,8 @@ class TestMinimumAttrition:
 
 class TestProportionalAttrition:
 
-    def test_100_unit_fleet_loses_1(self, db, test_nation):
-        """100 units: max(1, round(1.0)) = 1."""
+    def test_100_unit_fleet_loses_2(self, db, test_nation):
+        """100 units: max(1, round(2.5)) = 2 (Python banker's rounding rounds to even)."""
         home = _territory(db, "ha_p1_h", test_nation.id)
         dest = _territory(db, "ha_p1_d")
         fleet = _holding_fleet(db, test_nation.id, home.id, dest.id, units=100)
@@ -193,12 +194,12 @@ class TestProportionalAttrition:
         s = SessionLocal()
         try:
             f = s.query(Fleet).filter(Fleet.id == fleet.id).first()
-            assert f.unit_count == 99
+            assert f.unit_count == 98
         finally:
             s.close()
 
-    def test_200_unit_fleet_loses_2(self, db, test_nation):
-        """200 units: max(1, round(2.0)) = 2."""
+    def test_200_unit_fleet_loses_5(self, db, test_nation):
+        """200 units: max(1, round(5.0)) = 5."""
         home = _territory(db, "ha_p2_h", test_nation.id)
         dest = _territory(db, "ha_p2_d")
         fleet = _holding_fleet(db, test_nation.id, home.id, dest.id, units=200)
@@ -208,12 +209,12 @@ class TestProportionalAttrition:
         s = SessionLocal()
         try:
             f = s.query(Fleet).filter(Fleet.id == fleet.id).first()
-            assert f.unit_count == 198
+            assert f.unit_count == 195
         finally:
             s.close()
 
-    def test_150_unit_fleet_loses_2(self, db, test_nation):
-        """150 units: max(1, round(1.5)) = max(1, 2) = 2 (Python banker's rounding)."""
+    def test_150_unit_fleet_loses_4(self, db, test_nation):
+        """150 units: max(1, round(3.75)) = 4."""
         home = _territory(db, "ha_p3_h", test_nation.id)
         dest = _territory(db, "ha_p3_d")
         fleet = _holding_fleet(db, test_nation.id, home.id, dest.id, units=150)
@@ -223,7 +224,7 @@ class TestProportionalAttrition:
         s = SessionLocal()
         try:
             f = s.query(Fleet).filter(Fleet.id == fleet.id).first()
-            assert f.unit_count == 148
+            assert f.unit_count == 146
         finally:
             s.close()
 
@@ -287,8 +288,8 @@ class TestAttritionEvent:
             assert ev is not None
             assert ev.payload["fleet_id"] == fleet.id
             assert ev.payload["nation_id"] == test_nation.id
-            assert ev.payload["losses"] == 1
-            assert ev.payload["remaining"] == 99
+            assert ev.payload["losses"] == 2
+            assert ev.payload["remaining"] == 98
         finally:
             s.close()
 
@@ -368,7 +369,7 @@ class TestIsolation:
         try:
             fa = s.query(Fleet).filter(Fleet.id == fleet_a.id).first()
             fb = s.query(Fleet).filter(Fleet.id == fleet_b.id).first()
-            assert fa.unit_count == 99   # max(1, round(100*0.01)) = 1
-            assert fb.unit_count == 198  # max(1, round(200*0.01)) = 2
+            assert fa.unit_count == 98   # max(1, round(100*0.025)) = 2
+            assert fb.unit_count == 195  # max(1, round(200*0.025)) = 5
         finally:
             s.close()

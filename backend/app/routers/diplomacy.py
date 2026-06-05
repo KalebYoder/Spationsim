@@ -12,6 +12,8 @@ from ..routers.auth import get_current_player
 router = APIRouter(prefix="/api/diplomacy", tags=["diplomacy"])
 
 WAR_PENDING_HOURS = 4  # 2 ticks
+_NEW_PLAYER_PROTECTION_DAYS = 7
+_WAR_TERRITORY_RATIO = 3
 
 
 def get_diplomacy_status(db: Session, nation_a_id: int, nation_b_id: int) -> str:
@@ -146,8 +148,45 @@ def set_relation(
         if target_player and target_player.vacation_mode:
             raise HTTPException(status_code=409, detail="Cannot declare war on a nation in vacation mode")
 
+        # New player protection: block if defender is within 7 days of founding
+        # but attacker is not (two new players may fight each other freely).
+        now_check = datetime.now(timezone.utc)
+        protection_cutoff = now_check - timedelta(days=_NEW_PLAYER_PROTECTION_DAYS)
+        if target.created_at > protection_cutoff and nation.created_at <= protection_cutoff:
+            raise HTTPException(
+                status_code=409,
+                detail="Target nation is under new player protection (7 days from founding)",
+            )
+
+        # Territory ratio gate: attacker's peak territory count must not exceed
+        # 3× the defender's peak count.  Peak is used (not current) so this
+        # cannot be gamed by voluntarily abandoning territories before declaring.
+        attacker_max = max(1, nation.max_colonized_territory_count or 1)
+        defender_max = max(1, target.max_colonized_territory_count or 1)
+        if attacker_max > _WAR_TERRITORY_RATIO * defender_max:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Target nation is too small to declare war on "
+                    f"({_WAR_TERRITORY_RATIO}:1 territory ratio limit)"
+                ),
+            )
+
     row = _get_or_create_diplomacy(db, nation.id, target.id)
     current_status = row.status
+
+    if body.status == "war" and row.peace_until is not None:
+        now_check2 = datetime.now(timezone.utc)
+        if row.peace_until > now_check2:
+            remaining_seconds = (row.peace_until - now_check2).total_seconds()
+            remaining_ticks = int(remaining_seconds / (2 * 3600)) + 1
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Post-peace cooldown active: cannot re-declare war for "
+                    f"approximately {remaining_ticks} more tick(s)"
+                ),
+            )
 
     if current_status in ("war", "war_pending") and body.status not in ("war", "war_pending"):
         raise HTTPException(

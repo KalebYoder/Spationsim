@@ -1,5 +1,5 @@
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -19,6 +19,9 @@ from ..services.pathfinding import compute_reachable_ids
 router = APIRouter(prefix="/api/trade", tags=["trade"])
 
 CONFIRM_COOLDOWN_SECONDS = 5
+_TICK_HOURS = 2
+_WAR_MIN_TICKS = 12       # war must last at least 12 ticks before peace
+_PEACE_COOLDOWN_TICKS = 36  # post-peace lockout before re-declaration
 
 
 class ProposeTradeRequest(BaseModel):
@@ -224,7 +227,14 @@ def _execute_trade(trade: Trade, proposer: Nation, recipient: Nation, now: datet
 
     if trade.includes_peace:
         diplo = _get_or_create_diplomacy(db, trade.from_nation_id, trade.to_nation_id)
+        min_duration = timedelta(hours=_WAR_MIN_TICKS * _TICK_HOURS)
+        if diplo.war_started_at is None or (now - diplo.war_started_at) < min_duration:
+            raise HTTPException(
+                status_code=409,
+                detail=f"War must last at least {_WAR_MIN_TICKS} ticks before peace can be agreed",
+            )
         diplo.status = "neutral"
+        diplo.peace_until = now + timedelta(hours=_PEACE_COOLDOWN_TICKS * _TICK_HOURS)
         diplo.updated_at = now
 
     # Grant probe data access and map visibility to recipient

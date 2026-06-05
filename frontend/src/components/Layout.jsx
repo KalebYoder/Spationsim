@@ -5,6 +5,7 @@ import { useNation } from '../hooks/useNation'
 import { useTutorial } from '../hooks/useTutorial'
 import ChatWindow from './ChatWindow'
 import TutorialPanel from './TutorialPanel'
+import NationSearch from './NationSearch'
 
 const NAV = [
   { to: '/',           label: 'Nation',     end: true         },
@@ -194,10 +195,25 @@ export default function Layout() {
       <main style={{
         flex: 1,
         overflow: 'auto',
-        padding: '28px 32px',
+        display: 'flex',
+        flexDirection: 'column',
         background: 'var(--bg-base)',
       }}>
-        <Outlet />
+        {/* Top bar with nation search */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          alignItems: 'center',
+          padding: '10px 32px',
+          borderBottom: '1px solid var(--border)',
+          flexShrink: 0,
+        }}>
+          <NationSearch />
+        </div>
+
+        <div style={{ flex: 1, overflow: 'auto', padding: '28px 32px' }}>
+          <Outlet />
+        </div>
       </main>
 
       <ChatWindow />

@@ -13,6 +13,8 @@ class Diplomacy(Base):
     status = Column(String(16), default="neutral", nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now())
     war_starts_at = Column(DateTime(timezone=True), nullable=True)
+    war_started_at = Column(DateTime(timezone=True), nullable=True)
+    peace_until = Column(DateTime(timezone=True), nullable=True)
     requested_by = Column(Integer, ForeignKey("nations.id"), nullable=True)
     declared_by = Column(Integer, ForeignKey("nations.id"), nullable=True)
 
