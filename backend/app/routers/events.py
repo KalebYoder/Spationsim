@@ -23,7 +23,7 @@ _NATION_ID_TYPES = {
 _ATTACKER_TYPES = {"fleet_arrived_at_enemy_territory"}
 _DEFENDER_TYPES = {"enemy_fleet_arrived"}
 _PROBE_NATION_TYPES = {"probe_destroyed_in_enemy_territory"}
-_TERRITORY_NATION_TYPES = {"enemy_probe_detected_and_destroyed"}
+_TERRITORY_NATION_TYPES = {"foreign_probe_detected_and_destroyed"}
 
 
 @router.get("/log")

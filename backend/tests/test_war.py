@@ -625,7 +625,7 @@ class TestProbeDestructionInEnemyTerritory:
 
                 # Notify territory owner (early-warning notification)
                 db.add(Event(
-                    type="enemy_probe_detected",
+                    type="foreign_probe_detected",
                     payload={
                         "probe_id": probe.id,
                         "probe_nation_id": probe.nation_id,
@@ -688,11 +688,11 @@ class TestProbeDestructionInEnemyTerritory:
 
         # Check notifications for territory owner
         territory_owner_event = db.query(Event).filter(
-            Event.type == "enemy_probe_detected",
+            Event.type == "foreign_probe_detected",
             Event.payload["probe_id"].as_integer() == probe.id,
         ).first()
         assert territory_owner_event is not None, (
-            "Territory owner must receive an early-warning notification when they destroy an enemy probe"
+            "Territory owner must receive an early-warning notification when a foreign probe enters their territory"
         )
 
     def test_probe_not_destroyed_in_neutral_territory(

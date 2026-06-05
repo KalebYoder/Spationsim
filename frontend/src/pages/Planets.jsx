@@ -150,7 +150,11 @@ function TerritoryCard({ territory, flagColor, onRenamed, yieldData, highlightPr
           {yieldData && (
             <span style={{ display: 'flex', gap: 10, paddingLeft: 4, borderLeft: '1px solid var(--border)' }}>
               <YieldTag value={yieldData.minerals_per_tick} color="var(--amber)" suffix=" min/t" />
-              <YieldTag value={yieldData.fuel_per_tick} color="var(--teal)" suffix=" fuel/t" />
+              <YieldTag
+                value={yieldData.fuel_net_per_tick ?? yieldData.fuel_per_tick}
+                color={(yieldData.fuel_net_per_tick ?? yieldData.fuel_per_tick) >= 0 ? 'var(--teal)' : 'var(--danger)'}
+                suffix=" fuel/t"
+              />
               <YieldTag
                 value={yieldData.currency_net_per_tick}
                 color={yieldData.currency_net_per_tick >= 0 ? 'var(--teal)' : 'var(--danger)'}
@@ -235,7 +239,13 @@ function TerritoryCard({ territory, flagColor, onRenamed, yieldData, highlightPr
                     {yieldData.currency_upkeep_per_tick > 0 && (
                       <ProductionRow label="Fighter upkeep" value={`−${yieldData.currency_upkeep_per_tick}`} unit="¤/t" color="var(--danger)" />
                     )}
-                    {yieldData.currency_upkeep_per_tick === 0 && (
+                    {(yieldData.territory_upkeep_currency_per_tick ?? 0) > 0 && (
+                      <ProductionRow label="Territory upkeep" value={`−${yieldData.territory_upkeep_currency_per_tick}`} unit="¤/t" color="var(--danger)" />
+                    )}
+                    {(yieldData.logistics_fuel_upkeep_per_tick ?? 0) > 0 && (
+                      <ProductionRow label="Logistics" value={`−${yieldData.logistics_fuel_upkeep_per_tick}`} unit="fuel/t" color="var(--danger)" />
+                    )}
+                    {yieldData.currency_upkeep_per_tick === 0 && (yieldData.territory_upkeep_currency_per_tick ?? 0) === 0 && (yieldData.logistics_fuel_upkeep_per_tick ?? 0) === 0 && (
                       <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>None</span>
                     )}
                   </div>
@@ -249,6 +259,14 @@ function TerritoryCard({ territory, flagColor, onRenamed, yieldData, highlightPr
                     unit="¤/t"
                     color={yieldData.currency_net_per_tick >= 0 ? 'var(--teal)' : 'var(--danger)'}
                   />
+                  {(yieldData.logistics_fuel_upkeep_per_tick ?? 0) > 0 && (
+                    <ProductionRow
+                      label="Fuel"
+                      value={(yieldData.fuel_net_per_tick ?? 0) >= 0 ? `+${yieldData.fuel_net_per_tick ?? 0}` : `${yieldData.fuel_net_per_tick ?? 0}`}
+                      unit="fuel/t"
+                      color={(yieldData.fuel_net_per_tick ?? 0) >= 0 ? 'var(--teal)' : 'var(--danger)'}
+                    />
+                  )}
                 </div>
 
               </div>

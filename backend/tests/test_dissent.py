@@ -4,6 +4,8 @@ Integration tests for the dissent system tick logic.
 Dissent is a per-territory integer [0, 100].  Each tick the tick worker:
   1. Adds war-wide penalty to ALL colonized territories of warring nations:
        aggressor +3, defender +2
+       Multi-war rule: penalty is the MAX of any single war, not the sum.
+       A nation in two wars accrues from only the worst one.
   2. Adds fleet-presence bonus to the territory under occupation:
        holding fleet +6, engaged fleet +10
   3. Applies decay (already-negative constants):
@@ -26,6 +28,8 @@ Net balance reference:
   propaganda office (peace) → 0 + (-3) + (-2) = -5/tick
   propaganda office (war, no fleet) → +2 + (-2) + (-2) = -2/tick
   propaganda office (holding fleet) → +2 + 6 + 0 + (-3) = +9/tick
+  two wars, aggressor in both → max(3,3) = +3 (not +6), net +1/tick
+  two wars, aggressor+defender → max(3,2) = +3 (not +5), net +1/tick
 """
 
 from __future__ import annotations
@@ -551,6 +555,67 @@ def test_owned_but_uncolonized_territory_not_processed(db):
 # ---------------------------------------------------------------------------
 # Nation isolation — only the affected nation's territories change
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Multi-war cap — each planet uses the single highest war contribution
+# ---------------------------------------------------------------------------
+
+def test_two_wars_as_aggressor_not_stacked(db):
+    """Nation aggressor in two simultaneous wars: penalty is max(3,3)=3, not 6."""
+    p_agg = _player(db, "aggressor")
+    p_d1 = _player(db, "defender1")
+    p_d2 = _player(db, "defender2")
+    n_agg = _nation(db, p_agg.id)
+    n_d1 = _nation(db, p_d1.id)
+    n_d2 = _nation(db, p_d2.id)
+    t_agg = _territory(db, "0,0", n_agg.id)
+    _dissent_row(db, t_agg.id, 20)
+    _declare_war(db, n_agg, n_d1, declared_by=n_agg)
+    _declare_war(db, n_agg, n_d2, declared_by=n_agg)
+
+    _run_tick(db)
+
+    # max(3, 3) + (-2 war decay) = +1
+    assert _get_dissent(db, t_agg.id) == 21
+
+
+def test_two_wars_aggressor_and_defender_uses_higher(db):
+    """Nation is aggressor (+3) in war A and defender (+2) in war B: penalty is max(3,2)=3."""
+    p_a = _player(db, "mixed")
+    p_b = _player(db, "enemy1")
+    p_c = _player(db, "enemy2")
+    n_a = _nation(db, p_a.id)
+    n_b = _nation(db, p_b.id)
+    n_c = _nation(db, p_c.id)
+    t_a = _territory(db, "0,0", n_a.id)
+    _dissent_row(db, t_a.id, 20)
+    _declare_war(db, n_a, n_b, declared_by=n_a)   # n_a is aggressor → +3
+    _declare_war(db, n_a, n_c, declared_by=n_c)   # n_a is defender  → +2
+
+    _run_tick(db)
+
+    # max(3, 2) + (-2 war decay) = +1
+    assert _get_dissent(db, t_a.id) == 21
+
+
+def test_two_wars_both_as_defender_not_stacked(db):
+    """Nation is defender in two wars: penalty is max(2,2)=2 (stable, not +4)."""
+    p_def = _player(db, "defender")
+    p_a1 = _player(db, "aggressor1")
+    p_a2 = _player(db, "aggressor2")
+    n_def = _nation(db, p_def.id)
+    n_a1 = _nation(db, p_a1.id)
+    n_a2 = _nation(db, p_a2.id)
+    t_def = _territory(db, "0,0", n_def.id)
+    _dissent_row(db, t_def.id, 30)
+    _declare_war(db, n_def, n_a1, declared_by=n_a1)
+    _declare_war(db, n_def, n_a2, declared_by=n_a2)
+
+    _run_tick(db)
+
+    # max(2, 2) + (-2 war decay) = 0, stable
+    assert _get_dissent(db, t_def.id) == 30
+
 
 def test_war_dissent_applies_only_to_territories_of_warring_nations(db):
     p_a = _player(db, "nation_a")

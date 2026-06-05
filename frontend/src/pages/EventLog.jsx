@@ -10,7 +10,8 @@ const EVENT_LABELS = {
   fleet_holding_at_enemy_territory:   'Fleet holding at enemy territory',
   probe_stationed:                    'Probe arrived',
   probe_destroyed_in_enemy_territory: 'Probe destroyed in enemy territory',
-  enemy_probe_detected_and_destroyed: 'Enemy probe detected and destroyed',
+  foreign_probe_detected:             'Foreign probe entered your territory',
+  foreign_probe_detected_and_destroyed: 'Foreign probe detected and destroyed',
   colony_ship_stationed:              'Colony ship arrived',
   dissent_threshold_crossed:          'Dissent threshold crossed',
 }
@@ -62,7 +63,11 @@ function EventLine({ ev }) {
   } else if (ev.type === 'enemy_fleet_arrived') {
     detail = p.node_key ? ` — your territory at ${p.node_key}` : ''
   } else if (ev.type === 'probe_destroyed_in_enemy_territory') {
-    detail = p.territory_node_key ? ` — at ${p.territory_node_key}` : ''
+    detail = p.territory_node_key ? ` — at ${p.territory_node_key}` : (p.node_key ? ` — at ${p.node_key}` : '')
+  } else if (ev.type === 'foreign_probe_detected') {
+    const loc = p.node_key || p.territory_node_key || ''
+    const warNote = p.at_war ? ' (wartime — probe destroyed)' : ''
+    detail = loc ? ` — at ${loc}${warNote}` : warNote
   } else if (ev.type === 'dissent_threshold_crossed') {
     const loc = p.node_key || p.territory_node_key || ''
     const dir = p.direction === 'rising' ? 'rising' : 'falling'
@@ -72,6 +77,8 @@ function EventLine({ ev }) {
   const isHostile = [
     'enemy_fleet_arrived',
     'probe_destroyed_in_enemy_territory',
+    'foreign_probe_detected',
+    'foreign_probe_detected_and_destroyed',
   ].includes(ev.type)
 
   const isWarning = ev.type === 'dissent_threshold_crossed' && ev.payload?.direction === 'rising'

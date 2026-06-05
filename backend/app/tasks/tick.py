@@ -120,14 +120,14 @@ def run_tick():
         }
 
         # Build per-nation dissent accumulation from all active wars.
-        # A nation can be aggressor in one war and defender in another simultaneously;
-        # contributions are summed rather than taking the first-seen role.
+        # Each planet accrues from only one war — the one with the highest contribution.
+        # A nation in multiple wars does not stack penalties; the worst single war sets the rate.
         war_dissent_delta: dict[int, int] = {}
         at_war: set[int] = set()
         for war_row in db.query(Diplomacy).filter(Diplomacy.status == "war").all():
             for nid in (war_row.nation_a, war_row.nation_b):
                 contribution = DISSENT_WAR_AGGRESSOR if war_row.declared_by == nid else DISSENT_WAR_DEFENDER
-                war_dissent_delta[nid] = war_dissent_delta.get(nid, 0) + contribution
+                war_dissent_delta[nid] = max(war_dissent_delta.get(nid, 0), contribution)
                 at_war.add(nid)
 
         for nation in nations:
@@ -223,7 +223,7 @@ def run_tick():
             for pop, mineral_richness, fuel_richness in pop_rows:
                 cap = round(POPULATION_CAP_MULTIPLIER * (float(mineral_richness) + float(fuel_richness)))
                 if pop.current < cap:
-                    growth = min(round(pop.current * POPULATION_GROWTH_RATE), cap - pop.current)
+                    growth = min(max(1, round(pop.current * POPULATION_GROWTH_RATE)), cap - pop.current)
                     pop.current += growth
                     population_delta += growth
                     pop.last_updated = tick_at
@@ -653,7 +653,7 @@ def run_tick():
         for war_row in db.query(Diplomacy).filter(Diplomacy.status == "war").all():
             for nid in (war_row.nation_a, war_row.nation_b):
                 contribution = DISSENT_WAR_AGGRESSOR if war_row.declared_by == nid else DISSENT_WAR_DEFENDER
-                war_dissent_delta[nid] = war_dissent_delta.get(nid, 0) + contribution
+                war_dissent_delta[nid] = max(war_dissent_delta.get(nid, 0), contribution)
                 at_war.add(nid)
 
         # Vacation-mode nations: tick is frozen, dissent must not accumulate or decay
@@ -812,7 +812,7 @@ def run_tick():
             if not current_t:
                 continue
 
-            # Detect probes in enemy territory; destroy only during wartime
+            # Detect probes in foreign territory; destroy only during wartime.
             if current_t.nation_id and current_t.nation_id != probe.nation_id:
                 a = min(probe.nation_id, current_t.nation_id)
                 b = max(probe.nation_id, current_t.nation_id)
@@ -821,21 +821,25 @@ def run_tick():
                     Diplomacy.nation_b == b,
                     Diplomacy.status == "war",
                 ).first()
-                # Always notify territory owner regardless of war status
-                db.add(Event(
-                    type="enemy_probe_detected",
-                    payload={
-                        "probe_id": probe.id,
-                        "probe_nation_id": probe.nation_id,
-                        "territory_id": current_t.id,
-                        "territory_nation_id": current_t.nation_id,
-                        "at_war": war_row is not None,
-                        "tick_at": tick_at.isoformat(),
-                    },
-                    scheduled_for=tick_at,
-                    processed_at=tick_at,
-                    status="processed",
-                ))
+                # Notify territory owner only on first entry into this nation's space.
+                # Moving between territories of the same nation doesn't re-fire.
+                if probe.last_detected_nation_id != current_t.nation_id:
+                    db.add(Event(
+                        type="foreign_probe_detected",
+                        payload={
+                            "probe_id": probe.id,
+                            "probe_nation_id": probe.nation_id,
+                            "territory_id": current_t.id,
+                            "territory_nation_id": current_t.nation_id,
+                            "node_key": current_t.node_key,
+                            "at_war": war_row is not None,
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+                    probe.last_detected_nation_id = current_t.nation_id
                 if war_row:
                     probe.status = "destroyed"
                     db.add(Event(
@@ -845,6 +849,7 @@ def run_tick():
                             "probe_nation_id": probe.nation_id,
                             "territory_id": current_t.id,
                             "territory_nation_id": current_t.nation_id,
+                            "node_key": current_t.node_key,
                             "tick_at": tick_at.isoformat(),
                         },
                         scheduled_for=tick_at,
@@ -852,6 +857,9 @@ def run_tick():
                         status="processed",
                     ))
                     continue
+            else:
+                # Probe is in own or unclaimed space — reset so re-entry fires again.
+                probe.last_detected_nation_id = None
 
             # Pre-generate nodes within vision radius before movement so the
             # probe's next step is guaranteed to exist in territory_by_key.

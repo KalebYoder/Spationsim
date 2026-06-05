@@ -15,7 +15,8 @@ from ..models.player import Player
 from ..schemas.nation import NationCreateRequest, NationResponse, PublicNationResponse, TerritoryResponse
 from ..schemas.messaging import NationListItem
 from ..routers.auth import get_current_player
-from ..constants import POPULATION_START, UNIT_STATS
+from ..constants import POPULATION_START, UNIT_STATS, TERRITORY_UPKEEP_K, LOGISTICS_FUEL_K
+from ..services.logistics import compute_logistics_fuel_cost
 
 VACATION_MIN_HOURS = 48
 LOCKOUT_HOURS = 48
@@ -232,23 +233,36 @@ def get_territory_yields(
         for r in db.query(TerritoryDissent).filter(TerritoryDissent.territory_id.in_(territory_ids)).all()
     }
 
-    return [
-        {
+    n = len(territories)
+    # Per-territory share of nation-wide currency upkeep (k × N² total, k × N each).
+    territory_upkeep_currency = TERRITORY_UPKEEP_K * n if n > 0 else 0
+    # Per-territory share of logistics fuel upkeep (k × N(N+1)/2 total, divided evenly).
+    logistics_fuel_total = compute_logistics_fuel_cost(n, k=LOGISTICS_FUEL_K)
+    logistics_fuel_per_territory = round(logistics_fuel_total / n) if n > 0 else 0
+
+    result = []
+    for t in territories:
+        y = compute_territory_yield(
+            territory_type=t.territory_type,
+            mineral_richness=float(t.mineral_richness),
+            fuel_richness=float(t.fuel_richness),
+            mine_count=mine_counts.get(t.id, 0),
+            refinery_count=refinery_counts.get(t.id, 0),
+            stationed_fighters=stationed.get(t.id, 0),
+            dissent_modifier=dissent_production_modifier(dissent_map.get(t.id, 0)),
+        )
+        result.append({
             "territory_id": t.id,
             "dissent": dissent_map.get(t.id, 0),
             "dissent_modifier": round(dissent_production_modifier(dissent_map.get(t.id, 0)), 4),
-            **compute_territory_yield(
-                territory_type=t.territory_type,
-                mineral_richness=float(t.mineral_richness),
-                fuel_richness=float(t.fuel_richness),
-                mine_count=mine_counts.get(t.id, 0),
-                refinery_count=refinery_counts.get(t.id, 0),
-                stationed_fighters=stationed.get(t.id, 0),
-                dissent_modifier=dissent_production_modifier(dissent_map.get(t.id, 0)),
-            ),
-        }
-        for t in territories
-    ]
+            **y,
+            "territory_upkeep_currency_per_tick": territory_upkeep_currency,
+            "logistics_fuel_upkeep_per_tick": logistics_fuel_per_territory,
+            "fuel_net_per_tick": y["fuel_per_tick"] - logistics_fuel_per_territory,
+            # Override: full net includes fighter upkeep + territory upkeep
+            "currency_net_per_tick": y["currency_net_per_tick"] - territory_upkeep_currency,
+        })
+    return result
 
 
 @router.get("/mine/territories", response_model=list[TerritoryResponse])

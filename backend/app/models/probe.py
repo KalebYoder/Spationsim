@@ -16,8 +16,9 @@ class Probe(Base):
     departs_at = Column(DateTime(timezone=True))
     arrives_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_detected_nation_id = Column(Integer, ForeignKey("nations.id"), nullable=True)
 
-    nation = relationship("Nation", back_populates="probes")
+    nation = relationship("Nation", back_populates="probes", foreign_keys=[nation_id])
     origin_territory_rel = relationship("Territory", back_populates="probes_origin",
                                         foreign_keys=[origin_territory])
     current_territory_rel = relationship("Territory", back_populates="probes_current",
