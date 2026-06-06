@@ -601,13 +601,24 @@ def run_tick():
                     fleet.status = "post_battle_choice"
                     fleet.confirmation_expires_at = tick_at + timedelta(hours=2)
 
-        # Apply attrition to holding fleets: max(1, round(unit_count * 0.025)) losses per tick
+        # Territories where the owning nation has stationed fleets — these are "defended".
+        # Attrition only applies to holding fleets on defended territories; a fleet holding
+        # on an undefended (or uncolonised) territory has nothing to fight and does not decay.
+        defended_territory_ids: set[int] = set()
+        for sf in db.query(Fleet).filter(Fleet.status == "stationed").all():
+            t = db.get(Territory, sf.origin_territory)
+            if t and t.nation_id == sf.nation_id:
+                defended_territory_ids.add(t.id)
+
+        # Apply attrition to holding fleets on defended territories only.
         holding_fleets = (
             db.query(Fleet)
             .filter(Fleet.status == "holding")
             .all()
         )
         for fleet in holding_fleets:
+            if fleet.destination_territory not in defended_territory_ids:
+                continue
             losses = max(1, round(fleet.unit_count * 0.025))
             remaining = fleet.unit_count - losses
             if remaining <= 0:
