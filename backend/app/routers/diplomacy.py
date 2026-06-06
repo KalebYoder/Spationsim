@@ -6,8 +6,10 @@ from ..models.diplomacy import Diplomacy
 from ..models.nation import Nation
 from ..models.player import Player
 from ..models.event import Event
-from ..schemas.diplomacy import SetStatusRequest, DiplomacyRelationResponse, WarResponse
+from ..schemas.diplomacy import DeclareWarRequest, SetStatusRequest, DiplomacyRelationResponse, WarResponse
 from ..routers.auth import get_current_player
+from ..services.power import military_strength
+from ..constants import DISSENT_LOPSIDED_WAR_RATIO
 
 router = APIRouter(prefix="/api/diplomacy", tags=["diplomacy"])
 
@@ -122,6 +124,91 @@ def get_relation(
         updated_at=row.updated_at.isoformat() if row.updated_at else datetime.now(timezone.utc).isoformat(),
         requested_by=row.requested_by,
     )
+
+
+@router.post("/war", status_code=200)
+def declare_war(
+    body: DeclareWarRequest,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    """Declare war on another nation. Enters a 2-tick grace period (war_pending) first."""
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    if body.target_nation_id == nation.id:
+        raise HTTPException(status_code=409, detail="Cannot declare war on yourself")
+
+    target = db.get(Nation, body.target_nation_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Nation not found")
+
+    target_player = db.get(Player, target.player_id)
+    if target_player and target_player.vacation_mode:
+        raise HTTPException(status_code=409, detail="Cannot declare war on a nation in vacation mode")
+
+    now = datetime.now(timezone.utc)
+    protection_cutoff = now - timedelta(days=_NEW_PLAYER_PROTECTION_DAYS)
+    if target.created_at > protection_cutoff and nation.created_at <= protection_cutoff:
+        raise HTTPException(
+            status_code=409,
+            detail="Target nation is under new player protection (7 days from founding)",
+        )
+
+    attacker_max = max(1, nation.max_colonized_territory_count or 1)
+    defender_max = max(1, target.max_colonized_territory_count or 1)
+    if attacker_max > _WAR_TERRITORY_RATIO * defender_max:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Target nation is too small to declare war on "
+                f"({_WAR_TERRITORY_RATIO}:1 territory ratio limit)"
+            ),
+        )
+
+    row = _get_or_create_diplomacy(db, nation.id, target.id)
+    current_status = row.status
+
+    if current_status in ("war", "war_pending"):
+        return {"status": current_status, "target_nation_id": target.id}
+
+    if row.peace_until is not None and row.peace_until > now:
+        remaining_seconds = (row.peace_until - now).total_seconds()
+        remaining_ticks = int(remaining_seconds / (2 * 3600)) + 1
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Post-peace cooldown active: cannot re-declare war for "
+                f"approximately {remaining_ticks} more tick(s)"
+            ),
+        )
+
+    row.status = "war_pending"
+    row.war_starts_at = now + timedelta(hours=WAR_PENDING_HOURS)
+    row.updated_at = now
+    row.declared_by = nation.id
+
+    att_ms = military_strength(db, nation.id)
+    def_ms = military_strength(db, target.id)
+    row.is_lopsided = att_ms > DISSENT_LOPSIDED_WAR_RATIO * def_ms
+
+    db.flush()
+    db.add(Event(
+        type="war_declared",
+        payload={
+            "declaring_nation_id": nation.id,
+            "declaring_nation_name": nation.name,
+            "target_nation_id": target.id,
+            "target_nation_name": target.name,
+            "war_starts_at": row.war_starts_at.isoformat(),
+        },
+        scheduled_for=now,
+        processed_at=now,
+        status="processed",
+    ))
+    db.commit()
+    return {"status": row.status, "target_nation_id": target.id}
 
 
 @router.put("/{target_nation_id}", status_code=200)

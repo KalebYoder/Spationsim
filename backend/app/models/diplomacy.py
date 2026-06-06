@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, UniqueConstraint, Index, CheckConstraint
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, UniqueConstraint, Index, CheckConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from ..db.database import Base
@@ -17,6 +17,7 @@ class Diplomacy(Base):
     peace_until = Column(DateTime(timezone=True), nullable=True)
     requested_by = Column(Integer, ForeignKey("nations.id"), nullable=True)
     declared_by = Column(Integer, ForeignKey("nations.id"), nullable=True)
+    is_lopsided = Column(Boolean, default=False, nullable=False, server_default="false")
 
     nation_a_rel = relationship("Nation", back_populates="diplomacy_as_a", foreign_keys=[nation_a])
     nation_b_rel = relationship("Nation", back_populates="diplomacy_as_b", foreign_keys=[nation_b])

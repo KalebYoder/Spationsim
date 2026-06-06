@@ -30,7 +30,9 @@ from ..constants import (
     DISSENT_FLEET_HOLDING, DISSENT_FLEET_ENGAGED, DISSENT_CONQUEST_RESET,
     DISSENT_DECAY_PEACE, DISSENT_DECAY_WAR, DISSENT_DECAY_OCCUPIED,
     DISSENT_OFFICE_BONUS_NORMAL, DISSENT_OFFICE_BONUS_OCCUPIED,
+    DISSENT_LOPSIDED_MULTIPLIER, DISSENT_OFFICE_BONUS_AGGRESSOR,
 )
+from ..services.dissent import compute_territory_dissent_delta
 from ..map_gen import generate_territory
 
 TICK_HOURS = 2
@@ -122,13 +124,25 @@ def run_tick():
         # Build per-nation dissent accumulation from all active wars.
         # Each planet accrues from only one war — the one with the highest contribution.
         # A nation in multiple wars does not stack penalties; the worst single war sets the rate.
-        war_dissent_delta: dict[int, int] = {}
+        # war_state maps nation_id -> (max_contribution, is_aggressor_in_max_war, is_lopsided_in_max_war)
+        war_state: dict[int, tuple[int, bool, bool]] = {}
+        aggressor_nation_ids: set[int] = set()
         at_war: set[int] = set()
         for war_row in db.query(Diplomacy).filter(Diplomacy.status == "war").all():
             for nid in (war_row.nation_a, war_row.nation_b):
-                contribution = DISSENT_WAR_AGGRESSOR if war_row.declared_by == nid else DISSENT_WAR_DEFENDER
-                war_dissent_delta[nid] = max(war_dissent_delta.get(nid, 0), contribution)
+                is_agg = war_row.declared_by == nid
+                if is_agg:
+                    lopsided = bool(war_row.is_lopsided)
+                    contribution = round(DISSENT_WAR_AGGRESSOR * DISSENT_LOPSIDED_MULTIPLIER) if lopsided else DISSENT_WAR_AGGRESSOR
+                    aggressor_nation_ids.add(nid)
+                else:
+                    lopsided = False
+                    contribution = DISSENT_WAR_DEFENDER
+                current = war_state.get(nid)
+                if current is None or contribution > current[0]:
+                    war_state[nid] = (contribution, is_agg, lopsided and is_agg)
                 at_war.add(nid)
+        war_dissent_delta: dict[int, int] = {nid: v[0] for nid, v in war_state.items()}
 
         for nation in nations:
             territory_ids = [
@@ -648,13 +662,25 @@ def run_tick():
         }
 
         # Rebuild war dissent delta with fresh data (war_pending may have promoted above).
-        war_dissent_delta = {}
+        # war_state maps nation_id -> (max_contribution, is_aggressor_in_max_war, is_lopsided_in_max_war)
+        war_state = {}
+        aggressor_nation_ids = set()
         at_war = set()
         for war_row in db.query(Diplomacy).filter(Diplomacy.status == "war").all():
             for nid in (war_row.nation_a, war_row.nation_b):
-                contribution = DISSENT_WAR_AGGRESSOR if war_row.declared_by == nid else DISSENT_WAR_DEFENDER
-                war_dissent_delta[nid] = max(war_dissent_delta.get(nid, 0), contribution)
+                is_agg = war_row.declared_by == nid
+                if is_agg:
+                    lopsided = bool(war_row.is_lopsided)
+                    contribution = round(DISSENT_WAR_AGGRESSOR * DISSENT_LOPSIDED_MULTIPLIER) if lopsided else DISSENT_WAR_AGGRESSOR
+                    aggressor_nation_ids.add(nid)
+                else:
+                    lopsided = False
+                    contribution = DISSENT_WAR_DEFENDER
+                current = war_state.get(nid)
+                if current is None or contribution > current[0]:
+                    war_state[nid] = (contribution, is_agg, lopsided and is_agg)
                 at_war.add(nid)
+        war_dissent_delta = {nid: v[0] for nid, v in war_state.items()}
 
         # Vacation-mode nations: tick is frozen, dissent must not accumulate or decay
         vacation_nation_ids: set[int] = {
@@ -678,31 +704,17 @@ def run_tick():
                 db.add(row)
 
             old_dissent = row.dissent
-            delta = 0
-
-            # War-wide penalty: sum of contributions from every active war this nation is in
-            delta += war_dissent_delta.get(t.nation_id, 0)
-
-            # Fleet-presence bonus
-            occupied = t.id in holding_on or t.id in engaged_on
-            if t.id in engaged_on:
-                delta += DISSENT_FLEET_ENGAGED
-            elif t.id in holding_on:
-                delta += DISSENT_FLEET_HOLDING
-
-            # Decay
-            if occupied:
-                delta += DISSENT_DECAY_OCCUPIED
-                if t.id in office_territories:
-                    delta -= DISSENT_OFFICE_BONUS_OCCUPIED
-            elif t.nation_id in at_war:
-                delta += DISSENT_DECAY_WAR
-                if t.id in office_territories:
-                    delta -= DISSENT_OFFICE_BONUS_NORMAL
-            else:
-                delta += DISSENT_DECAY_PEACE
-                if t.id in office_territories:
-                    delta -= DISSENT_OFFICE_BONUS_NORMAL
+            contrib, is_agg, is_lopsided_agg = war_state.get(t.nation_id, (0, False, False))
+            fleet_status_str = ("engaged" if t.id in engaged_on else
+                                ("holding" if t.id in holding_on else None))
+            delta = compute_territory_dissent_delta(
+                at_war=t.nation_id in at_war,
+                is_aggressor=is_agg,
+                is_lopsided_aggressor=is_lopsided_agg,
+                fleet_status=fleet_status_str,
+                has_propaganda_office=t.id in office_territories,
+                is_aggressor_in_any_active_war=t.nation_id in aggressor_nation_ids,
+            )
 
             new_dissent = max(0, min(100, old_dissent + delta))
             row.dissent = new_dissent
