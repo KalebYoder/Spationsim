@@ -15,6 +15,7 @@ from ..models.nation import Nation
 from ..models.territory import Territory
 from ..models.territory_population import TerritoryPopulation
 from ..models.territory_dissent import TerritoryDissent
+from ..models.resource_log import ResourceLog
 from ..models.player import Player
 from ..services.pathfinding import compute_reachable_ids
 from ..schemas.nation import (
@@ -702,6 +703,20 @@ def raid_fleet(
         scheduled_for=now,
         processed_at=now,
         status="processed",
+    ))
+    db.add(ResourceLog(
+        nation_id=nation.id,
+        tick_at=now,
+        minerals_delta=round(minerals_stolen, 2),
+        fuel_delta=round(fuel_stolen, 2),
+        currency_delta=round(currency_stolen, 2),
+    ))
+    db.add(ResourceLog(
+        nation_id=defender_nation.id,
+        tick_at=now,
+        minerals_delta=-round(minerals_stolen, 2),
+        fuel_delta=-round(fuel_stolen, 2),
+        currency_delta=-round(currency_stolen, 2),
     ))
 
     db.commit()
