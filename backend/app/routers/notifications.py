@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from ..db.database import get_db
+from ..models.fleet import Fleet
 from ..models.mail_message import MailMessage
+from ..models.territory import Territory
 from ..models.trade import Trade
 from ..models.diplomacy import Diplomacy
 from ..models.nation import Nation
@@ -18,7 +20,7 @@ def get_notifications(
 ):
     nation = db.query(Nation).filter(Nation.player_id == player.id).first()
     if not nation:
-        return {"mail_unread": 0, "friend_pending": 0, "trade_incoming": 0}
+        return {"mail_unread": 0, "friend_pending": 0, "trade_incoming": 0, "threat_count": 0}
 
     mail_unread = (
         db.query(MailMessage)
@@ -49,8 +51,19 @@ def get_notifications(
         .count()
     )
 
+    threat_count = (
+        db.query(Fleet)
+        .join(Territory, Fleet.destination_territory == Territory.id)
+        .filter(
+            Fleet.status == "pending_confirmation",
+            Territory.nation_id == nation.id,
+        )
+        .count()
+    )
+
     return {
         "mail_unread": mail_unread,
         "friend_pending": friend_pending,
         "trade_incoming": trade_incoming,
+        "threat_count": threat_count,
     }

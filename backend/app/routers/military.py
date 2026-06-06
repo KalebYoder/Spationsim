@@ -79,6 +79,7 @@ def _fleet_response(fleet: Fleet, db: Session) -> FleetResponse:
 
     return FleetResponse(
         id=fleet.id,
+        nation_id=fleet.nation_id,
         unit_count=fleet.unit_count,
         status=fleet.status,
         standing_order=fleet.standing_order,
@@ -152,6 +153,27 @@ def list_fleets(
     if not nation:
         raise HTTPException(status_code=404, detail="No nation found")
     fleets = db.query(Fleet).filter(Fleet.nation_id == nation.id).all()
+    return [_fleet_response(f, db) for f in fleets]
+
+
+@router.get("/fleets/pending-at-mine", response_model=list[FleetResponse])
+def pending_fleets_at_mine(
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+    own_territory_ids = [
+        t_id for (t_id,) in
+        db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
+    ]
+    if not own_territory_ids:
+        return []
+    fleets = db.query(Fleet).filter(
+        Fleet.status == "pending_confirmation",
+        Fleet.destination_territory.in_(own_territory_ids),
+    ).all()
     return [_fleet_response(f, db) for f in fleets]
 
 

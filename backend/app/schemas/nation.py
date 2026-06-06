@@ -114,6 +114,7 @@ class SendFleetRequest(BaseModel):
 
 class FleetResponse(BaseModel):
     id: int
+    nation_id: int | None = None
     unit_count: int
     status: str
     standing_order: str
@@ -266,6 +267,7 @@ class TerritoryMapResponse(BaseModel):
     nation_name: str | None
     mineral_richness: float | None
     fuel_richness: float | None
+    detail_visible: bool = False
 
     model_config = {"from_attributes": True}
 

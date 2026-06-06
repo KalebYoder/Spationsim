@@ -11,7 +11,7 @@ const NAV = [
   { to: '/',           label: 'Nation',     end: true         },
   { to: '/economy',    label: 'Economy'                       },
   { to: '/facilities', label: 'Facilities'                    },
-  { to: '/military',   label: 'Military'                      },
+  { to: '/military',   label: 'Military',   threatBadge: true  },
   { to: '/probes',     label: 'Probes'                        },
   { to: '/market',     label: 'Market'                        },
   { to: '/planets',    label: 'Planets'                       },
@@ -42,6 +42,7 @@ export default function Layout() {
   const [mailUnread, setMailUnread] = useState(0)
   const [friendPending, setFriendPending] = useState(0)
   const [tradeIncoming, setTradeIncoming] = useState(0)
+  const [threatCount, setThreatCount] = useState(0)
 
   useEffect(() => {
     const fetchNotifications = () => {
@@ -52,6 +53,7 @@ export default function Layout() {
             setMailUnread(data.mail_unread)
             setFriendPending(data.friend_pending)
             setTradeIncoming(data.trade_incoming)
+            setThreatCount(data.threat_count ?? 0)
           }
         })
         .catch(() => {})
@@ -115,7 +117,7 @@ export default function Layout() {
 
         {/* Nav links */}
         <div style={{ flex: 1, padding: '0 8px' }}>
-          {NAV.map(({ to, label, end, badge, friendBadge, tradeBadge }) => (
+          {NAV.map(({ to, label, end, badge, friendBadge, tradeBadge, threatBadge }) => (
             <NavLink key={to} to={to} end={end} style={navLinkStyle}>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 {label}
@@ -156,6 +158,19 @@ export default function Layout() {
                     lineHeight: 1.4,
                   }}>
                     {tradeIncoming}
+                  </span>
+                )}
+                {threatBadge && threatCount > 0 && (
+                  <span style={{
+                    background: 'var(--danger)',
+                    color: '#fff',
+                    borderRadius: 10,
+                    padding: '1px 6px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    lineHeight: 1.4,
+                  }}>
+                    {threatCount}
                   </span>
                 )}
               </span>
