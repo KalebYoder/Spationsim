@@ -601,23 +601,28 @@ def run_tick():
                     fleet.status = "post_battle_choice"
                     fleet.confirmation_expires_at = tick_at + timedelta(hours=2)
 
-        # Territories where the owning nation has stationed fleets — these are "defended".
-        # Attrition only applies to holding fleets on defended territories; a fleet holding
-        # on an undefended (or uncolonised) territory has nothing to fight and does not decay.
-        defended_territory_ids: set[int] = set()
+        # territory_id -> set of nation_ids with stationed fleets there
+        stationed_at: dict[int, set[int]] = {}
         for sf in db.query(Fleet).filter(Fleet.status == "stationed").all():
-            t = db.get(Territory, sf.origin_territory)
-            if t and t.nation_id == sf.nation_id:
-                defended_territory_ids.add(t.id)
+            stationed_at.setdefault(sf.origin_territory, set()).add(sf.nation_id)
 
-        # Apply attrition to holding fleets on defended territories only.
+        # nation_id -> set of nation_ids it is currently at war with
+        at_war_with: dict[int, set[int]] = {}
+        for war_row in db.query(Diplomacy).filter(Diplomacy.status == "war").all():
+            at_war_with.setdefault(war_row.nation_a, set()).add(war_row.nation_b)
+            at_war_with.setdefault(war_row.nation_b, set()).add(war_row.nation_a)
+
+        # Attrition only applies when the holding fleet shares its destination territory
+        # with stationed fleets from a nation it is at war with.
         holding_fleets = (
             db.query(Fleet)
             .filter(Fleet.status == "holding")
             .all()
         )
         for fleet in holding_fleets:
-            if fleet.destination_territory not in defended_territory_ids:
+            nations_present = stationed_at.get(fleet.destination_territory, set())
+            enemies = at_war_with.get(fleet.nation_id, set())
+            if not nations_present & enemies:
                 continue
             losses = max(1, round(fleet.unit_count * 0.025))
             remaining = fleet.unit_count - losses

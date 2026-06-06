@@ -288,7 +288,7 @@ Developer thoughts: Dissent should be raised for a planet when it specifically i
 
 ### Best Practice Violations
 
-~~**The `holding` fleet status conflates two distinct situations with incompatible mechanics.**~~ *(Fixed — attrition now only applies to holding fleets on territories where the owning nation has stationed fleets. A holding fleet on an undefended or uncolonised territory has nothing to fight and pays no attrition. "Defended" is defined as: the territory's owning nation has at least one fleet with `status = 'stationed'` at that territory. Remaining issue: the Active Operations UI does not yet surface attrition rate or projected time-to-zero — players still cannot see why their fleet is decaying without reading the event log.)*
+~~**The `holding` fleet status conflates two distinct situations with incompatible mechanics.**~~ *(Fixed — attrition now only applies when the holding fleet's destination territory has stationed fleets belonging to a nation the holding fleet's nation is at war with. Holding on neutral, friendly, or unoccupied territory never triggers attrition. Remaining issue: the Active Operations UI does not yet surface attrition rate or projected time-to-zero — players still cannot see why their fleet is decaying without reading the event log.)*
 
 **~~Colony ship reachability is not enforced at the endpoint level.~~** *(Fixed — `send_colony_ship` now runs `compute_reachable_ids` before dispatch, identical to fleet dispatch.)*
 
