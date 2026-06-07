@@ -295,6 +295,9 @@ def set_relation(
         row.war_starts_at = now + timedelta(hours=WAR_PENDING_HOURS)
         row.updated_at = now
         row.declared_by = nation.id   # immutable — never mutated after this point
+        att_ms = military_strength(db, nation.id)
+        def_ms = military_strength(db, target.id)
+        row.is_lopsided = att_ms > DISSENT_LOPSIDED_WAR_RATIO * def_ms
         db.flush()
         # Notify both parties via event log
         db.add(Event(
