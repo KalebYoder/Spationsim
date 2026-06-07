@@ -31,6 +31,7 @@ from ..constants import (
     DISSENT_DECAY_PEACE, DISSENT_DECAY_WAR, DISSENT_DECAY_OCCUPIED,
     DISSENT_OFFICE_BONUS_NORMAL, DISSENT_OFFICE_BONUS_OCCUPIED,
     DISSENT_LOPSIDED_MULTIPLIER, DISSENT_OFFICE_BONUS_AGGRESSOR,
+    HOME_TERRITORY_DEFENSE_MULTIPLIER,
 )
 from ..services.dissent import compute_territory_dissent_delta
 from ..map_gen import generate_territory
@@ -553,9 +554,15 @@ def run_tick():
             if defender_fleet and defender_fleet.unit_count > 0:
                 attacker_count = fleet.unit_count
                 defender_count = defender_fleet.unit_count
+                multiplier = (
+                    HOME_TERRITORY_DEFENSE_MULTIPLIER
+                    if dest.is_colonized and dest.nation_id == defender_fleet.nation_id
+                    else 1.0
+                )
                 attacker_losses, defender_losses = resolve_combat_tick(
                     attacker_count, stats,
                     defender_count, stats,
+                    home_territory_multiplier=multiplier,
                 )
                 fleet.unit_count = max(0, attacker_count - attacker_losses)
                 defender_fleet.unit_count = max(0, defender_count - defender_losses)

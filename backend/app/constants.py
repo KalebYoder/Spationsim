@@ -88,6 +88,8 @@ DISSENT_DECAY_OCCUPIED   =  0  # enemy fleet present — no natural decay
 # Propaganda Office decay bonuses
 DISSENT_OFFICE_BONUS_NORMAL     = 2  # additional decay at peace or war without occupation
 DISSENT_OFFICE_BONUS_OCCUPIED   = 3  # additional decay while enemy fleet present
+HOME_TERRITORY_DEFENSE_MULTIPLIER = 1.5  # defender effective count on own colonized territory
+
 DISSENT_LOPSIDED_WAR_RATIO    = 3    # aggressor/defender military ratio threshold (strictly >)
 DISSENT_LOPSIDED_MULTIPLIER   = 1.5  # multiplier on aggressor war dissent when lopsided
 DISSENT_OFFICE_BONUS_AGGRESSOR = 1   # PO decay bonus cap while nation is the declared aggressor
