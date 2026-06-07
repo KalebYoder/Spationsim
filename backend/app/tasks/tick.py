@@ -32,6 +32,7 @@ from ..constants import (
     DISSENT_OFFICE_BONUS_NORMAL, DISSENT_OFFICE_BONUS_OCCUPIED,
     DISSENT_LOPSIDED_MULTIPLIER, DISSENT_OFFICE_BONUS_AGGRESSOR,
     HOME_TERRITORY_DEFENSE_MULTIPLIER,
+    HOLDING_ATTRITION_RATE,
 )
 from ..services.dissent import compute_territory_dissent_delta
 from ..map_gen import generate_territory
@@ -649,7 +650,7 @@ def run_tick():
             enemies = at_war_with.get(fleet.nation_id, set())
             if not nations_present & enemies:
                 continue
-            losses = max(1, round(fleet.unit_count * 0.025))
+            losses = max(1, round(fleet.unit_count * HOLDING_ATTRITION_RATE))
             remaining = fleet.unit_count - losses
             if remaining <= 0:
                 db.add(Event(

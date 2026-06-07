@@ -94,6 +94,11 @@ DISSENT_LOPSIDED_WAR_RATIO    = 3    # aggressor/defender military ratio thresho
 DISSENT_LOPSIDED_MULTIPLIER   = 1.5  # multiplier on aggressor war dissent when lopsided
 DISSENT_OFFICE_BONUS_AGGRESSOR = 1   # PO decay bonus cap while nation is the declared aggressor
 
+# Holding fleet attrition: fraction of unit_count lost per tick when holding at a territory
+# where an enemy stationed fleet is present. min 1 unit/tick enforced in tick.py.
+# At 2.5%: a 100-unit fleet lasts ~40 ticks (~80 hours) under contested holding.
+HOLDING_ATTRITION_RATE = 0.025
+
 # Territory count currency upkeep: k × N² per tick, where N = territories owned.
 # Marginal cost of the Nth territory = k × (2N − 1).  Optimal expansion stops when
 # marginal cost exceeds marginal income per territory.
