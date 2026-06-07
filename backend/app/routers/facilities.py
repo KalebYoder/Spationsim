@@ -1,6 +1,5 @@
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.infrastructure import Infrastructure
@@ -41,14 +40,12 @@ def _to_response(infra: Infrastructure, territory: Territory) -> InfrastructureR
     )
 
 
-def _assigned_pop(nation_id: int, db: Session) -> int:
-    """Sum population cost of all active + under_construction facilities for a nation.
-    Demolishing facilities have already freed their workers."""
+def _territory_assigned_pop(territory_id: int, db: Session) -> int:
+    """Sum population cost of all active + under_construction facilities on a single territory."""
     rows = (
         db.query(Infrastructure)
-        .join(Territory, Infrastructure.territory_id == Territory.id)
         .filter(
-            Territory.nation_id == nation_id,
+            Infrastructure.territory_id == territory_id,
             Infrastructure.status.in_(["active", "under_construction"]),
         )
         .all()
@@ -113,20 +110,16 @@ def build_facility(
 
     pop_cost = FACILITY_POPULATION_COST.get(body.type, 0)
     if pop_cost > 0:
-        territory_ids = [
-            t_id for (t_id,) in
-            db.query(Territory.id).filter(Territory.nation_id == nation.id).all()
-        ]
-        total_pop = int(
-            db.query(func.sum(TerritoryPopulation.current))
-            .filter(TerritoryPopulation.territory_id.in_(territory_ids))
+        territory_pop = int(
+            db.query(TerritoryPopulation.current)
+            .filter(TerritoryPopulation.territory_id == territory.id)
             .scalar() or 0
         )
-        unassigned = total_pop - _assigned_pop(nation.id, db)
+        unassigned = territory_pop - _territory_assigned_pop(territory.id, db)
         if unassigned < pop_cost:
             raise HTTPException(
                 status_code=409,
-                detail=f"Insufficient unassigned population (need {pop_cost}, have {unassigned})",
+                detail=f"Insufficient unassigned population on this territory (need {pop_cost}, have {max(0, unassigned)})",
             )
 
     nation.minerals -= cost["minerals"]
