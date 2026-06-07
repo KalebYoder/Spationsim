@@ -458,8 +458,8 @@ def recall_fleet(
     return _fleet_response(fleet, db)
 
 
-@router.post("/fleets/{fleet_id}/conquer", response_model=ClaimTerritoryResponse)
-def conquer_territory(
+@router.post("/fleets/{fleet_id}/occupy", response_model=ClaimTerritoryResponse)
+def occupy_territory(
     fleet_id: int,
     db: Session = Depends(get_db),
     player: Player = Depends(get_current_player),
@@ -473,7 +473,7 @@ def conquer_territory(
         raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
 
     if fleet.status != "engaged":
-        raise HTTPException(status_code=409, detail="Fleet must be engaged to conquer territory")
+        raise HTTPException(status_code=409, detail="Fleet must be engaged to occupy territory")
 
     dest = db.get(Territory, fleet.destination_territory)
     if not dest:

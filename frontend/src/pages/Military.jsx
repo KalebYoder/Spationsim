@@ -555,8 +555,8 @@ export default function Military() {
                 actions = (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {!hasDefenders && (
-                      <Btn variant="amber" onClick={() => handleFleetAction(f.id, 'conquer')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
-                        {pending === 'conquer' ? '…' : 'Conquer'}
+                      <Btn variant="amber" onClick={() => handleFleetAction(f.id, 'occupy')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
+                        {pending === 'occupy' ? '…' : 'Occupy'}
                       </Btn>
                     )}
                     <Btn variant="ghost" onClick={() => handleFleetAction(f.id, 'recall')} disabled={!!pending} style={{ padding: '3px 10px', fontSize: 12 }}>
