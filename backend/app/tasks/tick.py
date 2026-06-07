@@ -512,16 +512,6 @@ def run_tick():
                     status="processed",
                 ))
 
-        # Return expired post_battle_choice fleets to engaged so they fight this tick
-        expired_pbc = (
-            db.query(Fleet)
-            .filter(Fleet.status == "post_battle_choice", Fleet.confirmation_expires_at <= tick_at)
-            .all()
-        )
-        for fleet in expired_pbc:
-            fleet.status = "engaged"
-            fleet.confirmation_expires_at = None
-
         # Process engaged fleets (combat resolution per tick)
         engaged_fleets = (
             db.query(Fleet)
@@ -626,6 +616,16 @@ def run_tick():
                     processed_at=tick_at,
                     status="processed",
                 ))
+
+        # Return expired post_battle_choice fleets to engaged — they resume combat next tick
+        expired_pbc = (
+            db.query(Fleet)
+            .filter(Fleet.status == "post_battle_choice", Fleet.confirmation_expires_at <= tick_at)
+            .all()
+        )
+        for fleet in expired_pbc:
+            fleet.status = "engaged"
+            fleet.confirmation_expires_at = None
 
         # territory_id -> set of nation_ids with stationed fleets there
         stationed_at: dict[int, set[int]] = {}
