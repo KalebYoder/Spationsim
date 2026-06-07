@@ -61,9 +61,21 @@ def get_notifications(
         .count()
     )
 
+    # Own fleets waiting at enemy territory: pending_confirmation (need to confirm attack)
+    # or occupying (need to claim or withdraw within the window)
+    fleet_pending_action = (
+        db.query(Fleet)
+        .filter(
+            Fleet.nation_id == nation.id,
+            Fleet.status.in_(["pending_confirmation", "occupying"]),
+        )
+        .count()
+    )
+
     return {
         "mail_unread": mail_unread,
         "friend_pending": friend_pending,
         "trade_incoming": trade_incoming,
         "threat_count": threat_count,
+        "fleet_pending_action": fleet_pending_action,
     }

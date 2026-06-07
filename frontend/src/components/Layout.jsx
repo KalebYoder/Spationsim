@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useNation } from '../hooks/useNation'
@@ -43,18 +43,41 @@ export default function Layout() {
   const [friendPending, setFriendPending] = useState(0)
   const [tradeIncoming, setTradeIncoming] = useState(0)
   const [threatCount, setThreatCount] = useState(0)
+  const [notifPerm, setNotifPerm] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+  )
+  const prevCounts = useRef(null)
+
+  const fireNotification = (title, body) => {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+    new Notification(title, { body, icon: '/favicon.ico' })
+  }
+
+  const requestNotifPermission = () => {
+    if (typeof Notification === 'undefined') return
+    Notification.requestPermission().then(perm => setNotifPerm(perm))
+  }
 
   useEffect(() => {
     const fetchNotifications = () => {
       fetch('/api/notifications', { credentials: 'include' })
         .then(r => r.ok ? r.json() : null)
         .then(data => {
-          if (data) {
-            setMailUnread(data.mail_unread)
-            setFriendPending(data.friend_pending)
-            setTradeIncoming(data.trade_incoming)
-            setThreatCount(data.threat_count ?? 0)
+          if (!data) return
+          const threat = data.threat_count ?? 0
+          const pending = data.fleet_pending_action ?? 0
+          const prev = prevCounts.current
+          if (prev) {
+            if (threat > prev.threat)
+              fireNotification('Spationsim — Threat detected', 'An enemy fleet has arrived at your territory.')
+            if (pending > prev.pending)
+              fireNotification('Spationsim — Fleet awaiting orders', 'Your fleet has arrived and is waiting for your command.')
           }
+          prevCounts.current = { threat, pending }
+          setMailUnread(data.mail_unread)
+          setFriendPending(data.friend_pending)
+          setTradeIncoming(data.trade_incoming)
+          setThreatCount(threat)
         })
         .catch(() => {})
     }
@@ -189,8 +212,29 @@ export default function Layout() {
           fontSize: 12,
           color: 'var(--text-muted)',
         }}>
-          <div style={{ marginBottom: 6, color: 'var(--text-secondary)' }}>
-            {player?.username}
+          <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>{player?.username}</span>
+            {notifPerm !== 'unsupported' && (
+              <button
+                onClick={notifPerm === 'default' ? requestNotifPermission : undefined}
+                title={
+                  notifPerm === 'granted' ? 'Browser alerts enabled' :
+                  notifPerm === 'denied'  ? 'Alerts blocked — allow in browser settings' :
+                  'Enable browser alerts'
+                }
+                style={{
+                  background: 'none',
+                  padding: '2px 4px',
+                  fontSize: 14,
+                  lineHeight: 1,
+                  color: notifPerm === 'granted' ? 'var(--teal)' : 'var(--text-muted)',
+                  cursor: notifPerm === 'default' ? 'pointer' : 'default',
+                  opacity: notifPerm === 'denied' ? 0.4 : 1,
+                }}
+              >
+                {notifPerm === 'granted' ? '🔔' : '🔕'}
+              </button>
+            )}
           </div>
           <button
             onClick={logout}
