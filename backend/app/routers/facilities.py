@@ -188,3 +188,34 @@ def demolish_facility(
     db.commit()
     db.refresh(infra)
     return _to_response(infra, territory)
+
+
+@router.post("/{facility_id}/cancel")
+def cancel_construction(
+    facility_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    infra = db.get(Infrastructure, facility_id)
+    if not infra:
+        raise HTTPException(status_code=404, detail="Facility not found")
+
+    territory = db.get(Territory, infra.territory_id)
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not territory or not nation or territory.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="You do not control this territory")
+
+    if infra.status != "under_construction":
+        raise HTTPException(
+            status_code=409,
+            detail="Only facilities under construction can be cancelled",
+        )
+
+    cost = FACILITY_COSTS[infra.type]
+    nation.minerals += cost["minerals"]
+    nation.fuel += cost["fuel"]
+    nation.currency += cost.get("currency", 0)
+
+    db.delete(infra)
+    db.commit()
+    return {"detail": "Construction cancelled and resources refunded"}

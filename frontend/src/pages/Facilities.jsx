@@ -118,6 +118,8 @@ export default function Facilities() {
   const [error, setError] = useState('')
   const [demolishing, setDemolishing] = useState(null)
   const [demolishError, setDemolishError] = useState('')
+  const [cancelling, setCancelling] = useState(null)
+  const [cancelError, setCancelError] = useState('')
   const [sortKey, setSortKey] = useState(null)
   const [sortAsc, setSortAsc] = useState(true)
 
@@ -146,6 +148,25 @@ export default function Facilities() {
   useEffect(() => { if (!nationLoading) load() }, [nationLoading])
 
   const handleBuilt = () => load()
+
+  const handleCancel = async (facilityId) => {
+    setCancelling(facilityId)
+    setCancelError('')
+    try {
+      const r = await fetch(`/api/facilities/${facilityId}/cancel`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await r.json()
+      if (!r.ok) { setCancelError(data.detail || 'Cancel failed'); return }
+      setFacilities(fs => fs.filter(f => f.id !== facilityId))
+      load()
+    } catch {
+      setCancelError('Network error')
+    } finally {
+      setCancelling(null)
+    }
+  }
 
   const handleDemolish = async (facilityId) => {
     setDemolishing(facilityId)
@@ -216,6 +237,7 @@ export default function Facilities() {
 
       {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
       {demolishError && <p style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 8 }}>{demolishError}</p>}
+      {cancelError && <p style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 8 }}>{cancelError}</p>}
 
       <Card style={{ padding: 0 }}>
         {facilities.length === 0 ? (
@@ -272,6 +294,16 @@ export default function Facilities() {
                           {demolishing === f.id ? 'Queuing…' : 'Demolish'}
                         </Btn>
                       )}
+                      {f.status === 'under_construction' && (
+                        <Btn
+                          variant="ghost"
+                          onClick={() => handleCancel(f.id)}
+                          disabled={cancelling === f.id}
+                          style={{ fontSize: 11, padding: '3px 10px', color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                        >
+                          {cancelling === f.id ? 'Cancelling…' : 'Cancel'}
+                        </Btn>
+                      )}
                     </Td>
                   </Tr>
                 ))}
@@ -282,7 +314,7 @@ export default function Facilities() {
       </Card>
 
       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10 }}>
-        Demolishing returns 25% of build cost after 1 tick (2h). Only active facilities can be demolished.
+        Demolishing returns 25% of build cost after 1 tick (2h). Only active facilities can be demolished. Cancelling construction returns 100% immediately.
       </p>
     </div>
   )
