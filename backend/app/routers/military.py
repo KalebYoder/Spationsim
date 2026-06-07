@@ -95,6 +95,7 @@ def _fleet_response(fleet: Fleet, db: Session) -> FleetResponse:
         destination_has_defenders=dest_has_defenders,
         arrives_at=fleet.arrives_at.isoformat() if fleet.arrives_at else None,
         confirmation_expires_at=fleet.confirmation_expires_at.isoformat() if fleet.confirmation_expires_at else None,
+        occupation_expires_at=fleet.occupation_expires_at.isoformat() if fleet.occupation_expires_at else None,
     )
 
 
@@ -413,7 +414,7 @@ def recall_fleet(
     if not fleet or fleet.nation_id != nation.id:
         raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
 
-    if fleet.status not in ("pending_confirmation", "holding"):
+    if fleet.status not in ("pending_confirmation", "holding", "occupying"):
         raise HTTPException(
             status_code=409,
             detail="Fleet must be pending confirmation or holding to recall",
@@ -437,6 +438,7 @@ def recall_fleet(
     fleet.destination_territory = home.id
     fleet.departs_at = now
     fleet.arrives_at = arrives_at
+    fleet.occupation_expires_at = None
     fleet.confirmation_expires_at = None
 
     db.add(Event(
@@ -472,8 +474,8 @@ def occupy_territory(
     if not fleet or fleet.nation_id != nation.id:
         raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
 
-    if fleet.status != "engaged":
-        raise HTTPException(status_code=409, detail="Fleet must be engaged to occupy territory")
+    if fleet.status != "occupying":
+        raise HTTPException(status_code=409, detail="Fleet must be in occupation window to occupy territory")
 
     dest = db.get(Territory, fleet.destination_territory)
     if not dest:
@@ -528,6 +530,7 @@ def occupy_territory(
     fleet.destination_territory = None
     fleet.arrives_at = None
     fleet.departs_at = None
+    fleet.occupation_expires_at = None
     fleet.confirmation_expires_at = None
 
     db.add(Event(

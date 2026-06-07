@@ -608,6 +608,24 @@ def run_tick():
                     fleet.status = "post_battle_choice"
                     fleet.confirmation_expires_at = tick_at + timedelta(hours=2)
 
+            else:
+                # Enemy territory, no defending fleet — enter occupation window
+                fleet.status = "occupying"
+                fleet.occupation_expires_at = tick_at + timedelta(hours=12)
+                db.add(Event(
+                    type="territory_uncontested",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "attacker_nation_id": fleet.nation_id,
+                        "territory_id": dest.id,
+                        "node_key": dest.node_key,
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
+
         # territory_id -> set of nation_ids with stationed fleets there
         stationed_at: dict[int, set[int]] = {}
         for sf in db.query(Fleet).filter(Fleet.status == "stationed").all():
@@ -662,16 +680,72 @@ def run_tick():
                     status="processed",
                 ))
 
+        # ── Occupation window processing ─────────────────────────────────────
+        occupying_fleets = (
+            db.query(Fleet)
+            .filter(Fleet.status == "occupying")
+            .all()
+        )
+        for fleet in occupying_fleets:
+            dest = db.get(Territory, fleet.destination_territory)
+            if not dest:
+                continue
+
+            # Enemy defender returned — cancel window and revert to holding
+            enemy_stationed = (
+                db.query(Fleet)
+                .filter(
+                    Fleet.nation_id == dest.nation_id,
+                    Fleet.origin_territory == dest.id,
+                    Fleet.status == "stationed",
+                )
+                .first()
+            )
+            if enemy_stationed and enemy_stationed.unit_count > 0:
+                fleet.status = "holding"
+                fleet.occupation_expires_at = None
+                db.add(Event(
+                    type="occupation_window_cancelled",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "territory_id": dest.id,
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
+                continue
+
+            # Window expired — auto-recall
+            if fleet.occupation_expires_at and fleet.occupation_expires_at <= tick_at:
+                recall_from = fleet.destination_territory
+                _send_fleet_home(db, fleet, tick_at)
+                fleet.occupation_expires_at = None
+
+                db.add(Event(
+                    type="occupation_window_expired",
+                    payload={
+                        "fleet_id": fleet.id,
+                        "nation_id": fleet.nation_id,
+                        "territory_id": recall_from,
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
+
         # ── Dissent update ────────────────────────────────────────────────────
         # Build per-territory fleet-presence map from current fleet statuses.
         # holding/engaged fleets sit at destination_territory (their launch point
         # is origin_territory, which is the attacker's own colony — not the target).
         holding_on: set[int] = set()   # territory_ids with a holding enemy fleet
         engaged_on: set[int] = set()   # territory_ids with an engaged enemy fleet
-        for fleet in db.query(Fleet).filter(Fleet.status.in_(["holding", "engaged"])).all():
+        for fleet in db.query(Fleet).filter(Fleet.status.in_(["holding", "engaged", "occupying"])).all():
             dest = db.get(Territory, fleet.destination_territory)
             if dest and dest.nation_id and dest.nation_id != fleet.nation_id:
-                if fleet.status == "holding":
+                if fleet.status in ("holding", "occupying"):
                     holding_on.add(dest.id)
                 else:
                     engaged_on.add(dest.id)

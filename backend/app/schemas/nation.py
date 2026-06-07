@@ -130,6 +130,7 @@ class FleetResponse(BaseModel):
     destination_has_defenders: bool | None
     arrives_at: str | None
     confirmation_expires_at: str | None
+    occupation_expires_at: str | None = None
 
     model_config = {"from_attributes": True}
 

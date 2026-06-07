@@ -1,0 +1,1 @@
+ALTER TABLE fleets ADD COLUMN IF NOT EXISTS occupation_expires_at TIMESTAMPTZ;

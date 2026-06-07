@@ -17,6 +17,7 @@ class Fleet(Base):
     departs_at = Column(DateTime(timezone=True))
     arrives_at = Column(DateTime(timezone=True))
     confirmation_expires_at = Column(DateTime(timezone=True))
+    occupation_expires_at = Column(DateTime(timezone=True))
     standing_order = Column(String(32), default="hold", nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -31,4 +32,6 @@ class Fleet(Base):
         Index("ix_fleets_status_arrives_at", "status", "arrives_at"),
         # Find fleets pending confirmation window expiry
         Index("ix_fleets_status_confirmation_expires", "status", "confirmation_expires_at"),
+        # Find fleets in occupation window
+        Index("ix_fleets_status_occupation_expires", "status", "occupation_expires_at"),
     )
