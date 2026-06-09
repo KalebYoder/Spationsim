@@ -11,7 +11,7 @@ Feature spec:
     unchanged.
   - New constant:  HOME_TERRITORY_DEFENSE_MULTIPLIER = 1.5  in constants.py
   - Tick passes HOME_TERRITORY_DEFENSE_MULTIPLIER when the destination territory
-    is_colonized=True and is owned by the defender.  On unclaimed or void (not
+    is_owned=True and is owned by the defender.  On unclaimed or void (not
     colonized) territory it passes the default 1.0.
 
 Unit stats (starfighter):
@@ -389,8 +389,8 @@ def _territory(
         mineral_richness=1,
         fuel_richness=1,
         distance_from_center=1,
-        is_colonized=is_col,
-        colonized_at=datetime.now(timezone.utc) if is_col else None,
+        is_owned=is_col,
+        owned_at=datetime.now(timezone.utc) if is_col else None,
     )
     db.add(t)
     db.flush()
@@ -493,7 +493,7 @@ def _expected_losses_with_multiplier(
 
 class TestTickCombatOnColonizedDefenderTerritory:
     """
-    When an engaged fleet fights on a territory that is_colonized=True and
+    When an engaged fleet fights on a territory that is_owned=True and
     owned by the defender, the tick must apply the home-territory multiplier.
     """
 
@@ -515,7 +515,7 @@ class TestTickCombatOnColonizedDefenderTerritory:
         n_def = _nation(db, p_def.id, "HTM Defenders")
 
         t_att_home = _territory(db, "50,0", n_att.id)
-        # is_colonized=True, nation_id=n_def.id → home territory multiplier applies
+        # is_owned=True, nation_id=n_def.id → home territory multiplier applies
         t_def_home = _territory(db, "51,0", n_def.id)
 
         _declare_war(db, n_att, n_def, declared_by=n_att)
@@ -619,12 +619,12 @@ class TestTickCombatOnColonizedDefenderTerritory:
 
 class TestTickCombatOnUnclaimedTerritory:
     """
-    When the destination territory is not colonized (is_colonized=False), the
+    When the destination territory is not colonized (is_owned=False), the
     tick must NOT apply the home-territory multiplier.  Losses must match the
     flat 1.0 calculation.
 
     We use a territory that is owned by the defender (nation_id set) but
-    is_colonized=False (a claimed void node / outpost) — this is the most
+    is_owned=False (a claimed void node / outpost) — this is the most
     relevant scenario because the territory has an owner but no colonization
     bonus should apply.
     """
@@ -632,7 +632,7 @@ class TestTickCombatOnUnclaimedTerritory:
     def test_combat_on_unclaimed_territory_no_multiplier(self, db: Session):
         """
         Setup:
-          - Destination territory: owned by defender, is_colonized=False (void claimed).
+          - Destination territory: owned by defender, is_owned=False (void claimed).
           - Attacker fleet: engaged, destination=that territory.
           - Defender fleet: stationed at that territory.
           - Nations are at war.
@@ -646,7 +646,7 @@ class TestTickCombatOnUnclaimedTerritory:
         n_def = _nation(db, p_def.id, "NC Defenders")
 
         t_att_home = _territory(db, "60,0", n_att.id)
-        # Owned by defender but is_colonized=False — no home multiplier should apply
+        # Owned by defender but is_owned=False — no home multiplier should apply
         t_void_claimed = _territory(db, "61,0", n_def.id, colonized=False,
                                     territory_type="void")
 

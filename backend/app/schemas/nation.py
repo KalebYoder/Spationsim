@@ -121,7 +121,7 @@ class FleetResponse(BaseModel):
     origin_territory_id: int | None
     origin_node_key: str | None
     origin_name: str | None
-    origin_is_colonized: bool | None
+    origin_is_owned: bool | None
     origin_nation_id: int | None
     destination_territory_id: int | None
     destination_node_key: str | None
@@ -140,7 +140,7 @@ class ClaimTerritoryResponse(BaseModel):
     node_key: str
     name: str | None
     nation_id: int
-    colonized_at: str
+    owned_at: str
 
 
 class ColonyShipResponse(BaseModel):
@@ -150,7 +150,7 @@ class ColonyShipResponse(BaseModel):
     origin_territory_id: int | None
     origin_node_key: str | None
     origin_name: str | None
-    origin_is_colonized: bool | None
+    origin_is_owned: bool | None
     origin_nation_id: int | None
     origin_current_population: int | None
     destination_territory_id: int | None
@@ -214,7 +214,7 @@ class TerritoryResponse(BaseModel):
     mineral_richness: float
     fuel_richness: float
     distance_from_center: int
-    is_colonized: bool
+    is_owned: bool
     dissent: int = 0
 
     model_config = {"from_attributes": True}
@@ -263,7 +263,7 @@ class TerritoryMapResponse(BaseModel):
     node_key: str
     territory_type: str
     distance_from_center: int
-    is_colonized: bool
+    is_owned: bool
     nation_id: int | None
     nation_name: str | None
     mineral_richness: float | None
@@ -298,7 +298,7 @@ class ProbeDataResponse(BaseModel):
     mineral_richness: float
     fuel_richness: float
     discovered_at: str
-    is_colonized: bool
+    is_owned: bool
     nation_id: int | None
     nation_name: str | None
 
@@ -317,7 +317,7 @@ class ProbeMarketListingResponse(BaseModel):
     fuel_richness: float
     price: float
     listed_at: str
-    is_colonized: bool
+    is_owned: bool
     colonized_by_name: str | None
     is_own: bool           # caller is the seller
     already_have: bool     # caller already owns this probe data (discovered or purchased)

@@ -15,9 +15,11 @@ class Territory(Base):
     mineral_richness = Column(Numeric(4, 2), nullable=False)
     fuel_richness = Column(Numeric(4, 2), nullable=False)
     distance_from_center = Column(Integer, nullable=False, index=True)
-    is_colonized = Column(Boolean, default=False, nullable=False, index=True)
-    colonized_at = Column(DateTime(timezone=True))
+    is_owned = Column(Boolean, default=False, nullable=False, index=True)
+    owned_at = Column(DateTime(timezone=True))
     last_renamed_at = Column(DateTime(timezone=True), nullable=True)
+    last_sortie_at = Column(DateTime(timezone=True), nullable=True)
+    sortie_queued = Column(Boolean, default=False, nullable=False, server_default="false")
 
     nation = relationship("Nation", back_populates="territories", foreign_keys=[nation_id])
     infrastructure = relationship("Infrastructure", back_populates="territory")
@@ -41,7 +43,7 @@ class Territory(Base):
 
     __table_args__ = (
         # Tick processing finds all colonized territories for a nation together
-        Index("ix_territories_nation_colonized", "nation_id", "is_colonized"),
+        Index("ix_territories_nation_colonized", "nation_id", "is_owned"),
         # Map rendering and probe range queries filter by distance band
-        Index("ix_territories_distance_colonized", "distance_from_center", "is_colonized"),
+        Index("ix_territories_distance_colonized", "distance_from_center", "is_owned"),
     )

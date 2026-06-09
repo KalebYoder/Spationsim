@@ -108,8 +108,8 @@ def _territory(
         mineral_richness=1,
         fuel_richness=1,
         distance_from_center=1,
-        is_colonized=colonized and nation_id is not None,
-        colonized_at=datetime.now(timezone.utc) if (colonized and nation_id) else None,
+        is_owned=colonized and nation_id is not None,
+        owned_at=datetime.now(timezone.utc) if (colonized and nation_id) else None,
     )
     db.add(t)
     db.flush()
@@ -515,7 +515,7 @@ def test_void_unclaimed_territory_gets_no_dissent_row(db):
         mineral_richness=0,
         fuel_richness=0,
         distance_from_center=10,
-        is_colonized=False,
+        is_owned=False,
     )
     db.add(void_t)
     db.flush()
@@ -531,7 +531,7 @@ def test_void_unclaimed_territory_gets_no_dissent_row(db):
 def test_owned_but_uncolonized_territory_not_processed(db):
     p = _player(db, "alpha")
     n = _nation(db, p.id)
-    # Claimed (nation_id set) but is_colonized=False — should not be processed
+    # Claimed (nation_id set) but is_owned=False — should not be processed
     t = Territory(
         node_key="5,5",
         territory_type="void",
@@ -539,7 +539,7 @@ def test_owned_but_uncolonized_territory_not_processed(db):
         mineral_richness=0,
         fuel_richness=0,
         distance_from_center=3,
-        is_colonized=False,
+        is_owned=False,
     )
     db.add(t)
     db.flush()

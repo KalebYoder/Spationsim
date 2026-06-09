@@ -98,8 +98,8 @@ def _territory(
         mineral_richness=1.0,
         fuel_richness=1.0,
         distance_from_center=1,
-        is_colonized=colonized and nation_id is not None,
-        colonized_at=datetime.now(timezone.utc) if (colonized and nation_id) else None,
+        is_owned=colonized and nation_id is not None,
+        owned_at=datetime.now(timezone.utc) if (colonized and nation_id) else None,
     )
     db.add(t)
     db.flush()
@@ -396,7 +396,7 @@ class TestMaxColonizedTerritoryCountTracking:
 
         # Simulate losing t3 — nation_id set to None (uncolonized or taken)
         t3.nation_id = None
-        t3.is_colonized = False
+        t3.is_owned = False
         db.flush()
 
         db.refresh(n)

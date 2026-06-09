@@ -106,3 +106,6 @@ HOLDING_ATTRITION_RATE = 0.025
 #   Low-richness rim (I≈150):  N* ≈ 7     Medium (I≈300): N* ≈ 15    Core (I≈600): N* ≈ 30
 # Tune during beta; stored here so the open-question monitor has a single lever to pull.
 TERRITORY_UPKEEP_K = 10
+
+DEFENDER_AUTO_ROUT_FRACTION = 0.50
+RAID_CAP_FRACTION = 0.10

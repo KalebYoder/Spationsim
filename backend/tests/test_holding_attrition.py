@@ -66,8 +66,8 @@ def _territory(db: Session, node_key: str, nation_id: int | None = None) -> Terr
         mineral_richness=1,
         fuel_richness=1,
         distance_from_center=1,
-        is_colonized=nation_id is not None,
-        colonized_at=datetime.now(timezone.utc) if nation_id else None,
+        is_owned=nation_id is not None,
+        owned_at=datetime.now(timezone.utc) if nation_id else None,
     )
     db.add(t)
     db.flush()

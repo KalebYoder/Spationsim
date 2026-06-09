@@ -71,7 +71,7 @@ def create_nation(
         raise HTTPException(status_code=404, detail="Territory not found")
     if territory.territory_type == 'void':
         raise HTTPException(status_code=409, detail="Cannot settle in void space")
-    if territory.is_colonized:
+    if territory.is_owned:
         raise HTTPException(status_code=409, detail="Territory is already occupied")
 
     nation = Nation(
@@ -88,8 +88,8 @@ def create_nation(
     db.flush()  # get nation.id before updating territory
 
     territory.nation_id = nation.id
-    territory.is_colonized = True
-    territory.colonized_at = datetime.now(timezone.utc)
+    territory.is_owned = True
+    territory.owned_at = datetime.now(timezone.utc)
     territory.name = body.home_planet_name
 
     nation.max_colonized_territory_count = 1  # home territory
@@ -288,7 +288,7 @@ def get_my_territories(
             "mineral_richness": float(t.mineral_richness),
             "fuel_richness": float(t.fuel_richness),
             "distance_from_center": t.distance_from_center,
-            "is_colonized": t.is_colonized,
+            "is_owned": t.is_owned,
             "dissent": dissent_map.get(t.id, 0),
         }
         for t in territories
@@ -306,7 +306,7 @@ def get_nation_territories(
         raise HTTPException(status_code=404, detail="Nation not found")
     return (
         db.query(Territory)
-        .filter(Territory.nation_id == nation_id, Territory.is_colonized == True)
+        .filter(Territory.nation_id == nation_id, Territory.is_owned == True)
         .all()
     )
 
@@ -337,7 +337,7 @@ def get_nation_public(
 
     territory_count = (
         db.query(Territory)
-        .filter(Territory.nation_id == nation_id, Territory.is_colonized == True)
+        .filter(Territory.nation_id == nation_id, Territory.is_owned == True)
         .count()
     )
 

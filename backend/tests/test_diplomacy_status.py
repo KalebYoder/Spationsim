@@ -73,7 +73,7 @@ def _make_territory(
     db: Session,
     node_key: str,
     nation_id: int | None = None,
-    is_colonized: bool = False,
+    is_owned: bool = False,
     territory_type: str = "normal",
     mineral_richness: int = 2,
     fuel_richness: int = 2,
@@ -86,8 +86,8 @@ def _make_territory(
         mineral_richness=mineral_richness,
         fuel_richness=fuel_richness,
         distance_from_center=1,
-        is_colonized=is_colonized,
-        colonized_at=datetime.now(timezone.utc) if is_colonized else None,
+        is_owned=is_owned,
+        owned_at=datetime.now(timezone.utc) if is_owned else None,
     )
     db.add(t)
     db.flush()
@@ -96,7 +96,7 @@ def _make_territory(
 
 def _make_void(db: Session, node_key: str, nation_id: int | None = None) -> Territory:
     return _make_territory(
-        db, node_key, nation_id=nation_id, is_colonized=bool(nation_id),
+        db, node_key, nation_id=nation_id, is_owned=bool(nation_id),
         territory_type="void", mineral_richness=0, fuel_richness=0,
     )
 
@@ -366,7 +366,7 @@ class TestFleetDispatchByDiplomacy:
     def _setup_two_nations(self, db: Session, test_player: Player):
         """Player nation at home, enemy nation at their territory. Returns (my_nation, my_home, enemy_nation, enemy_territory)."""
         my_nation = _make_nation(db, test_player, "My Nation")
-        my_home = _make_territory(db, "0,0", nation_id=my_nation.id, is_colonized=True)
+        my_home = _make_territory(db, "0,0", nation_id=my_nation.id, is_owned=True)
         my_nation.home_territory_id = my_home.id
         db.add(TerritoryPopulation(territory_id=my_home.id, current=500))
         _make_fleet(db, my_nation.id, my_home.id, unit_count=20)
@@ -379,7 +379,7 @@ class TestFleetDispatchByDiplomacy:
         self, db: Session, auth_client, test_player: Player
     ):
         my_nation, my_home, enemy_nation = self._setup_two_nations(db, test_player)
-        enemy_planet = _make_territory(db, "1,0", nation_id=enemy_nation.id, is_colonized=True)
+        enemy_planet = _make_territory(db, "1,0", nation_id=enemy_nation.id, is_owned=True)
         _set_diplomacy(db, my_nation.id, enemy_nation.id, "friendly")
         db.commit()
 
@@ -409,7 +409,7 @@ class TestFleetDispatchByDiplomacy:
         self, db: Session, auth_client, test_player: Player
     ):
         my_nation, my_home, enemy_nation = self._setup_two_nations(db, test_player)
-        enemy_planet = _make_territory(db, "1,0", nation_id=enemy_nation.id, is_colonized=True)
+        enemy_planet = _make_territory(db, "1,0", nation_id=enemy_nation.id, is_owned=True)
         # neutral is default
         db.commit()
 
@@ -424,7 +424,7 @@ class TestFleetDispatchByDiplomacy:
         self, db: Session, auth_client, test_player: Player
     ):
         my_nation, my_home, enemy_nation = self._setup_two_nations(db, test_player)
-        enemy_planet = _make_territory(db, "1,0", nation_id=enemy_nation.id, is_colonized=True)
+        enemy_planet = _make_territory(db, "1,0", nation_id=enemy_nation.id, is_owned=True)
         _set_diplomacy(db, my_nation.id, enemy_nation.id, "war")
         db.commit()
 
@@ -482,8 +482,8 @@ class TestFleetArrivalByDiplomacy:
         defender_p = _make_player(db, "def", "def@example.com")
         defender_n = _make_nation(db, defender_p, "Defender")
 
-        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_colonized=True)
-        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_colonized=True)
+        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_owned=True)
+        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_owned=True)
         attacker_n.home_territory_id = atk_home.id
 
         _set_diplomacy(db, attacker_n.id, defender_n.id, "friendly")
@@ -503,8 +503,8 @@ class TestFleetArrivalByDiplomacy:
         defender_p = _make_player(db, "def", "def@example.com")
         defender_n = _make_nation(db, defender_p, "Defender")
 
-        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_colonized=True)
-        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_colonized=True)
+        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_owned=True)
+        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_owned=True)
         attacker_n.home_territory_id = atk_home.id
 
         _set_diplomacy(db, attacker_n.id, defender_n.id, "war")
@@ -522,8 +522,8 @@ class TestFleetArrivalByDiplomacy:
         defender_p = _make_player(db, "def", "def@example.com")
         defender_n = _make_nation(db, defender_p, "Defender")
 
-        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_colonized=True)
-        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_colonized=True)
+        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_owned=True)
+        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_owned=True)
         attacker_n.home_territory_id = atk_home.id
 
         _set_diplomacy(db, attacker_n.id, defender_n.id, "war")
@@ -543,7 +543,7 @@ class TestFleetArrivalByDiplomacy:
         defender_p = _make_player(db, "def", "def@example.com")
         defender_n = _make_nation(db, defender_p, "Defender")
 
-        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_colonized=True)
+        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_owned=True)
         def_void = _make_void(db, "1,0", nation_id=defender_n.id)
         attacker_n.home_territory_id = atk_home.id
 
@@ -571,8 +571,8 @@ class TestFleetArrivalByDiplomacy:
         defender_p = _make_player(db, "def", "def@example.com")
         defender_n = _make_nation(db, defender_p, "Defender")
 
-        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_colonized=True)
-        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_colonized=True)
+        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_owned=True)
+        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_owned=True)
         attacker_n.home_territory_id = atk_home.id
 
         _set_diplomacy(db, attacker_n.id, defender_n.id, "war_pending")
@@ -592,8 +592,8 @@ class TestFleetArrivalByDiplomacy:
         defender_p = _make_player(db, "def", "def@example.com")
         defender_n = _make_nation(db, defender_p, "Defender")
 
-        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_colonized=True)
-        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_colonized=True)
+        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_owned=True)
+        def_planet = _make_territory(db, "1,0", nation_id=defender_n.id, is_owned=True)
         attacker_n.home_territory_id = atk_home.id
 
         _set_diplomacy(db, attacker_n.id, defender_n.id, "war_pending")
@@ -613,7 +613,7 @@ class TestFleetArrivalByDiplomacy:
         defender_p = _make_player(db, "def", "def@example.com")
         defender_n = _make_nation(db, defender_p, "Defender")
 
-        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_colonized=True)
+        atk_home = _make_territory(db, "0,0", nation_id=attacker_n.id, is_owned=True)
         def_void = _make_void(db, "1,0", nation_id=defender_n.id)
         attacker_n.home_territory_id = atk_home.id
 

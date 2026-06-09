@@ -84,8 +84,8 @@ def _make_colonized_territory(
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=distance_from_center,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
@@ -220,7 +220,7 @@ class TestNationCurrencyColumn:
             mineral_richness=1.00,
             fuel_richness=1.00,
             distance_from_center=10,
-            is_colonized=False,
+            is_owned=False,
         )
         db.add(territory)
         db.flush()
@@ -466,7 +466,7 @@ class TestTickCurrencyGeneration:
             mineral_richness=1.00,
             fuel_richness=1.00,
             distance_from_center=5,
-            is_colonized=False,
+            is_owned=False,
         )
         db.add(uncolonized)
         db.flush()

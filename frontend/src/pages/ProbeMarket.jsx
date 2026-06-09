@@ -56,7 +56,7 @@ function ListingCard({ listing, myNationId, onBuy, onDelist }) {
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {listing.is_own && <Badge color="teal">Your Listing</Badge>}
           {listing.already_have && !listing.is_own && <Badge color="amber">Already Owned</Badge>}
-          {listing.is_colonized && (
+          {listing.is_owned && (
             <Badge color="rose">
               {listing.colonized_by_name ? `Colonized by ${listing.colonized_by_name}` : 'Colonized'}
             </Badge>
@@ -176,7 +176,7 @@ function MyListingsPanel({ myData, listings, onList, onDelist }) {
               {available.map(d => (
                 <option key={d.id} value={d.id}>
                   {d.territory_name || d.node_key} — Min {d.mineral_richness.toFixed(1)} / Fuel {d.fuel_richness.toFixed(1)}
-                  {d.is_colonized ? ' (colonized)' : ''}
+                  {d.is_owned ? ' (owned)' : ''}
                 </option>
               ))}
             </select>

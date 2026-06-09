@@ -73,8 +73,8 @@ def _make_colonized_territory(
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=distance_from_center,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
@@ -339,7 +339,7 @@ class TestFighterUpkeep:
         _make_infrastructure(db, t_origin.id, "mine")
         t_dest = Territory(
             node_key="up_f2_1", territory_type="normal", nation_id=None,
-            mineral_richness=1.0, fuel_richness=1.0, distance_from_center=2, is_colonized=False,
+            mineral_richness=1.0, fuel_richness=1.0, distance_from_center=2, is_owned=False,
         )
         db.add(t_dest)
         db.flush()
@@ -483,7 +483,7 @@ class TestFighterUpkeep:
         _make_infrastructure(db, territory.id, "mine")
         t_dest = Territory(
             node_key="up_f7_1", territory_type="normal", nation_id=None,
-            mineral_richness=1.0, fuel_richness=1.0, distance_from_center=2, is_colonized=False,
+            mineral_richness=1.0, fuel_richness=1.0, distance_from_center=2, is_owned=False,
         )
         db.add(t_dest)
         db.flush()
@@ -564,7 +564,7 @@ class TestCombinedUpkeep:
             mineral_richness=1.00,
             fuel_richness=1.00,
             distance_from_center=1,
-            is_colonized=False,
+            is_owned=False,
         )
         db.add(anchor)
         db.flush()
@@ -683,7 +683,7 @@ class TestResourceLogUpkeepAccuracy:
             mineral_richness=1.00,
             fuel_richness=1.00,
             distance_from_center=1,
-            is_colonized=False,
+            is_owned=False,
         )
         db.add(anchor)
         db.flush()
@@ -720,7 +720,7 @@ class TestResourceLogUpkeepAccuracy:
             mineral_richness=1.00,
             fuel_richness=1.00,
             distance_from_center=1,
-            is_colonized=False,
+            is_owned=False,
         )
         db.add(anchor)
         db.flush()
@@ -760,7 +760,7 @@ class TestResourceLogUpkeepAccuracy:
             mineral_richness=1.00,
             fuel_richness=1.00,
             distance_from_center=1,
-            is_colonized=False,
+            is_owned=False,
         )
         db.add(anchor)
         db.flush()

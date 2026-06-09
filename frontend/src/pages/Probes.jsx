@@ -109,7 +109,7 @@ function LaunchMap({ territories, nationId, onLaunched, onCancel }) {
   const [error, setError] = useState('')
 
   const ownedKeys = useMemo(
-    () => territories.filter(t => t.nation_id === nationId && t.is_colonized).map(t => t.node_key),
+    () => territories.filter(t => t.nation_id === nationId && t.is_owned && t.territory_population > 0).map(t => t.node_key),
     [territories, nationId]
   )
 
@@ -129,7 +129,7 @@ function LaunchMap({ territories, nationId, onLaunched, onCancel }) {
     if (t.territory_type === 'void') return
 
     if (!origin) {
-      if (t.nation_id === nationId && t.is_colonized) {
+      if (t.nation_id === nationId && t.is_owned && t.territory_population > 0) {
         setOrigin(t)
         setDestination(null)
         setError('')
@@ -472,7 +472,7 @@ export default function Probes() {
                 <Td muted>{Number(pd.fuel_richness).toFixed(2)}</Td>
                 <Td muted>{fmtAgo(pd.discovered_at)}</Td>
                 <Td>
-                  {pd.is_colonized
+                  {pd.is_owned
                     ? <span style={{ color: pd.nation_id === nation?.id ? 'var(--teal)' : colorOf(pd.nation_id) }}>Colonized{pd.nation_name ? ` by ${pd.nation_name}` : ''}</span>
                     : <span style={{ color: 'var(--text-muted)' }}>Unclaimed</span>
                   }

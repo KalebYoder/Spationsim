@@ -41,7 +41,7 @@ def _fresh() -> Session:
     return SessionLocal()
 
 
-def _territory(db, node_key, *, nation_id=None, is_colonized=False,
+def _territory(db, node_key, *, nation_id=None, is_owned=False,
                mineral_richness=3, fuel_richness=3) -> Territory:
     t = Territory(
         node_key=node_key,
@@ -50,8 +50,8 @@ def _territory(db, node_key, *, nation_id=None, is_colonized=False,
         fuel_richness=fuel_richness,
         distance_from_center=0,
         nation_id=nation_id,
-        is_colonized=is_colonized,
-        colonized_at=datetime.now(timezone.utc) if is_colonized else None,
+        is_owned=is_owned,
+        owned_at=datetime.now(timezone.utc) if is_owned else None,
     )
     db.add(t)
     db.flush()
@@ -151,7 +151,7 @@ class TestEventLogEmptyState:
 
 class TestEventLogStructure:
     def _setup_economy(self, db, test_nation):
-        home = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        home = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         _mine(db, home.id)
         _commit_and_run_tick(db)
 
@@ -187,8 +187,8 @@ class TestEventLogStructure:
 
     def test_event_entry_has_type_and_payload(self, auth_client, db, test_nation):
         """When a game event exists, each event object must have type and payload."""
-        home = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
-        dest = _territory(db, "1,0", nation_id=test_nation.id, is_colonized=True)
+        home = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
+        dest = _territory(db, "1,0", nation_id=test_nation.id, is_owned=True)
         _arrived_fleet(db, test_nation.id, home.id, dest.id)
         _commit_and_run_tick(db)
 
@@ -207,7 +207,7 @@ class TestEventLogStructure:
 class TestEconomyData:
     def test_minerals_delta_from_mine(self, auth_client, db, test_nation):
         # mine on richness-3 territory: round(2*3) = 6 minerals/tick
-        home = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True,
+        home = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True,
                           mineral_richness=3, fuel_richness=1)
         _mine(db, home.id)
         _commit_and_run_tick(db)
@@ -217,7 +217,7 @@ class TestEconomyData:
 
     def test_currency_delta_from_mine_territory(self, auth_client, db, test_nation):
         # income=30 (1 mine), territory_upkeep=10 (k×1²), net=20
-        home = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        home = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         _mine(db, home.id)
         _commit_and_run_tick(db)
 
@@ -226,7 +226,7 @@ class TestEconomyData:
 
     def test_no_entry_when_zero_production_and_no_events(self, auth_client, db, test_nation):
         # Nation with territory but no mine → no deltas → no resource_log → no entry
-        _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         _commit_and_run_tick(db)
 
         data = auth_client.get("/api/events/log").json()
@@ -244,7 +244,7 @@ class TestEconomyData:
 
 class TestTickEventCreation:
     def test_fleet_stationed_event_in_db(self, db, test_nation):
-        home = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        home = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         dest = _territory(db, "1,0")
         _arrived_fleet(db, test_nation.id, home.id, dest.id, units=5)
         _commit_and_run_tick(db)
@@ -257,7 +257,7 @@ class TestTickEventCreation:
             s.close()
 
     def test_fleet_stationed_payload(self, db, test_nation):
-        home = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        home = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         dest = _territory(db, "1,0")
         _arrived_fleet(db, test_nation.id, home.id, dest.id, units=7)
         _commit_and_run_tick(db)
@@ -274,7 +274,7 @@ class TestTickEventCreation:
 
     def test_probe_stationed_event_in_db(self, db, test_nation):
         # Probe at (0,0), destination (1,0) — one hex, moves and stations in one tick
-        current_t = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        current_t = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         dest_t = _territory(db, "1,0")
         _arriving_probe(db, test_nation.id, current_t.id, dest_t.id)
         _commit_and_run_tick(db)
@@ -287,7 +287,7 @@ class TestTickEventCreation:
             s.close()
 
     def test_probe_stationed_payload(self, db, test_nation):
-        current_t = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        current_t = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         dest_t = _territory(db, "1,0")
         _arriving_probe(db, test_nation.id, current_t.id, dest_t.id)
         _commit_and_run_tick(db)
@@ -302,7 +302,7 @@ class TestTickEventCreation:
             s.close()
 
     def test_colony_ship_stationed_event_in_db(self, db, test_nation):
-        origin = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        origin = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         dest = _territory(db, "5,0")
         _arrived_colony_ship(db, test_nation.id, origin.id, dest.id)
         _commit_and_run_tick(db)
@@ -315,7 +315,7 @@ class TestTickEventCreation:
             s.close()
 
     def test_colony_ship_stationed_payload(self, db, test_nation):
-        origin = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        origin = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         dest = _territory(db, "5,0")
         _arrived_colony_ship(db, test_nation.id, origin.id, dest.id)
         _commit_and_run_tick(db)
@@ -336,7 +336,7 @@ class TestTickEventCreation:
 
 class TestGameEventsInLog:
     def test_fleet_stationed_appears_in_log(self, auth_client, db, test_nation):
-        home = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        home = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         dest = _territory(db, "1,0")
         _arrived_fleet(db, test_nation.id, home.id, dest.id)
         _commit_and_run_tick(db)
@@ -346,7 +346,7 @@ class TestGameEventsInLog:
         assert "fleet_stationed" in types
 
     def test_probe_stationed_appears_in_log(self, auth_client, db, test_nation):
-        cur = _territory(db, "0,0", nation_id=test_nation.id, is_colonized=True)
+        cur = _territory(db, "0,0", nation_id=test_nation.id, is_owned=True)
         dest = _territory(db, "1,0")
         _arriving_probe(db, test_nation.id, cur.id, dest.id)
         _commit_and_run_tick(db)
@@ -369,8 +369,8 @@ class TestGameEventsInLog:
 
         _set_war(db, test_nation.id, enemy_nation.id)
 
-        enemy_origin = _territory(db, "9,0", nation_id=enemy_nation.id, is_colonized=True)
-        our_home = _territory(db, "10,0", nation_id=test_nation.id, is_colonized=True)
+        enemy_origin = _territory(db, "9,0", nation_id=enemy_nation.id, is_owned=True)
+        our_home = _territory(db, "10,0", nation_id=test_nation.id, is_owned=True)
         _arrived_fleet(db, enemy_nation.id, enemy_origin.id, our_home.id)
         _commit_and_run_tick(db)
 
@@ -395,8 +395,8 @@ class TestGameEventsInLog:
         _set_war(db, test_nation.id, enemy_nation.id)
 
         # probe currently in enemy territory (triggers destruction)
-        enemy_t = _territory(db, "20,0", nation_id=enemy_nation.id, is_colonized=True)
-        origin = _territory(db, "18,0", nation_id=test_nation.id, is_colonized=True)
+        enemy_t = _territory(db, "20,0", nation_id=enemy_nation.id, is_owned=True)
+        origin = _territory(db, "18,0", nation_id=test_nation.id, is_owned=True)
         probe = Probe(
             nation_id=test_nation.id,
             origin_territory=origin.id,
@@ -431,7 +431,7 @@ class TestNationIsolation:
     def test_economy_not_leaked_across_nations(self, auth_client, db, test_nation):
         nation2 = self._second_nation(db)
         # nation2 has a high-production mine — should NOT appear in test_nation's log
-        home2 = _territory(db, "50,0", nation_id=nation2.id, is_colonized=True,
+        home2 = _territory(db, "50,0", nation_id=nation2.id, is_owned=True,
                            mineral_richness=5, fuel_richness=5)
         _mine(db, home2.id)
         _commit_and_run_tick(db)
@@ -447,7 +447,7 @@ class TestNationIsolation:
 
     def test_fleet_events_not_leaked_across_nations(self, auth_client, db, test_nation):
         nation2 = self._second_nation(db, "p_iso2", "iso2@test.com")
-        origin2 = _territory(db, "60,0", nation_id=nation2.id, is_colonized=True)
+        origin2 = _territory(db, "60,0", nation_id=nation2.id, is_owned=True)
         dest2 = _territory(db, "61,0")
         _arrived_fleet(db, nation2.id, origin2.id, dest2.id)
         _commit_and_run_tick(db)

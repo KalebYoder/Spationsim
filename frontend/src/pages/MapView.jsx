@@ -32,12 +32,19 @@ function hexDistance(keyA, keyB) {
   return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr))
 }
 
+function fleetCircleColor(relation) {
+  if (relation === 'own') return '#22c55e'
+  if (relation === 'hostile') return '#ef4444'
+  return '#d4b896'
+}
+
 export default function MapView() {
   const { nation } = useNation()
   const { colorOf } = useDiplomacy()
   const [territories, setTerritories] = useState([])
   const [fleets, setFleets] = useState([])
   const [wars, setWars] = useState([])
+  const [mapFleets, setMapFleets] = useState([])
   const [loading, setLoading] = useState(true)
   const [hovered, setHovered] = useState(null)
 
@@ -55,19 +62,22 @@ export default function MapView() {
   const [warError, setWarError] = useState('')
 
   const load = useCallback(async () => {
-    const [tRes, fRes, wRes] = await Promise.all([
+    const [tRes, fRes, wRes, mfRes] = await Promise.all([
       fetch('/api/territories', { credentials: 'include' }),
       fetch('/api/military/fleets', { credentials: 'include' }),
       fetch('/api/diplomacy/wars', { credentials: 'include' }),
+      fetch('/api/territories/map-fleets', { credentials: 'include' }),
     ])
-    const [t, f, w] = await Promise.all([
+    const [t, f, w, mf] = await Promise.all([
       tRes.ok ? tRes.json() : [],
       fRes.ok ? fRes.json() : [],
       wRes.ok ? wRes.json() : [],
+      mfRes.ok ? mfRes.json() : [],
     ])
     setTerritories(t)
     setFleets(f)
     setWars(w)
+    setMapFleets(mf)
     setLoading(false)
   }, [])
 
@@ -78,6 +88,18 @@ export default function MapView() {
   for (const f of fleets) {
     if (f.status === 'stationed' && f.origin_territory_id) {
       stationedByTerritory[f.origin_territory_id] = (stationedByTerritory[f.origin_territory_id] || 0) + f.unit_count
+    }
+  }
+
+  // { node_key: [{total_power, relation, status, nation_id}, ...] } — stationary only
+  const fleetsByNodeKey = {}
+  const transitFleets = []
+  for (const f of mapFleets) {
+    if (f.status === 'in_transit') {
+      transitFleets.push(f)
+    } else {
+      if (!fleetsByNodeKey[f.node_key]) fleetsByNodeKey[f.node_key] = []
+      fleetsByNodeKey[f.node_key].push(f)
     }
   }
 
@@ -218,6 +240,9 @@ export default function MapView() {
           { color: '#457b9d', label: 'Unclaimed mid' },
           { color: '#52796f', label: 'Unclaimed mid-rim' },
           { color: '#2a2f50', label: 'Rim' },
+          { color: '#22c55e', label: 'Your fleet (● stationary / ▲ in transit)' },
+          { color: '#ef4444', label: 'Hostile fleet' },
+          { color: '#d4b896', label: 'Neutral fleet' },
         ].map(({ color, label }) => (
           <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block' }} />
@@ -255,6 +280,14 @@ export default function MapView() {
               const strokeW = isSource || isDest ? 2 : 1
               const opacity = !isReachable ? 0.15 : (isHovered || isMyTerritory || isSource || isDest ? 1 : 0.75)
 
+              const territoryFleets = t.detail_visible ? (fleetsByNodeKey[t.node_key] || []) : []
+              const fleetOffsets = [
+                [0, -(baseR + 5)],
+                [+(baseR + 4), -(baseR + 3)],
+                [-(baseR + 4), -(baseR + 3)],
+                [0, +(baseR + 5)],
+              ]
+
               return (
                 <g key={t.id}>
                   <circle
@@ -272,6 +305,79 @@ export default function MapView() {
                   {hasfighters && isMyTerritory && (
                     <circle cx={x + baseR - 1} cy={y - baseR + 1} r={2.5} fill="#f59e0b" style={{ pointerEvents: 'none' }} />
                   )}
+                  {/* Fleet presence circles */}
+                  {territoryFleets.map((f, i) => {
+                    const [offsetX, offsetY] = fleetOffsets[Math.min(i, fleetOffsets.length - 1)]
+                    return (
+                      <g key={`fleet-${f.nation_id}`} style={{ pointerEvents: 'none' }}>
+                        <circle
+                          cx={x + offsetX} cy={y + offsetY}
+                          r={5}
+                          fill={fleetCircleColor(f.relation)}
+                          opacity={0.9}
+                        />
+                        <text
+                          x={x + offsetX} y={y + offsetY + 1}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fontSize={f.total_power >= 1000 ? 4 : 5}
+                          fontWeight="bold"
+                          fill="#000"
+                          style={{ pointerEvents: 'none', userSelect: 'none' }}
+                        >
+                          {f.total_power >= 1000 ? `${Math.round(f.total_power / 1000)}k` : f.total_power}
+                        </text>
+                      </g>
+                    )
+                  })}
+                </g>
+              )
+            })}
+
+            {/* In-transit fleet triangles — rendered over territory layer */}
+            {transitFleets.map(f => {
+              const originCoords = f.origin_node_key.split(',').map(Number)
+              const destCoords = f.destination_node_key.split(',').map(Number)
+              const [ox, oy] = hexToSvg(originCoords[0], originCoords[1])
+              const [dx, dy] = hexToSvg(destCoords[0], destCoords[1])
+
+              const now = Date.now()
+              const departs = f.departs_at ? new Date(f.departs_at).getTime() : now
+              const arrives = f.arrives_at ? new Date(f.arrives_at).getTime() : now
+              const progress = arrives > departs
+                ? Math.max(0, Math.min(1, (now - departs) / (arrives - departs)))
+                : 0.5
+
+              const fx = ox + progress * (dx - ox)
+              const fy = oy + progress * (dy - oy)
+
+              // Triangle pointing toward destination
+              const angle = Math.atan2(dy - oy, dx - ox) - Math.PI / 2
+              const triR = 5
+              const cosA = Math.cos(angle)
+              const sinA = Math.sin(angle)
+              const pts = [
+                [0, -triR],
+                [-triR * 0.866, triR * 0.5],
+                [triR * 0.866, triR * 0.5],
+              ].map(([px, py]) =>
+                `${fx + cosA * px - sinA * py},${fy + sinA * px + cosA * py}`
+              ).join(' ')
+
+              return (
+                <g key={`transit-${f.nation_id}-${f.origin_node_key}-${f.destination_node_key}`} style={{ pointerEvents: 'none' }}>
+                  <polygon points={pts} fill={fleetCircleColor(f.relation)} opacity={0.9} />
+                  <text
+                    x={fx} y={fy + 1}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={f.total_power >= 1000 ? 4 : 5}
+                    fontWeight="bold"
+                    fill="#000"
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    {f.total_power >= 1000 ? `${Math.round(f.total_power / 1000)}k` : f.total_power}
+                  </text>
                 </g>
               )
             })}
@@ -296,6 +402,14 @@ export default function MapView() {
             {stationedByTerritory[tooltip.id] > 0 && (
               <> &nbsp; <span style={{ color: '#f59e0b' }}>⚔ {stationedByTerritory[tooltip.id]} fighters</span></>
             )}
+            {tooltip.detail_visible && (fleetsByNodeKey[tooltip.node_key] || []).map(f => (
+              <span key={f.nation_id}>
+                {' '}&nbsp;
+                <span style={{ color: fleetCircleColor(f.relation) }}>
+                  {f.relation === 'own' ? 'Fleet' : f.relation === 'hostile' ? 'Hostile' : 'Neutral'} {f.total_power}pw
+                </span>
+              </span>
+            ))}
           </>
         )}
       </div>

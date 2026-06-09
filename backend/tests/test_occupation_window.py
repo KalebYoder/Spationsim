@@ -171,8 +171,8 @@ def home_territory(db: Session, test_nation: Nation) -> Territory:
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=0,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
@@ -190,8 +190,8 @@ def enemy_territory(db: Session, enemy_nation: Nation) -> Territory:
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=2,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
@@ -1377,7 +1377,7 @@ class TestOccupyEndpoint:
             mineral_richness=0.00,
             fuel_richness=0.00,
             distance_from_center=3,
-            is_colonized=False,
+            is_owned=False,
         )
         db.add(void_territory)
         db.flush()

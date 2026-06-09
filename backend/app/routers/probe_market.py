@@ -19,7 +19,7 @@ def _build_reachable_set(nation_id: int, db: Session) -> set[int] | None:
     """Return territory IDs reachable from the buyer's empire, or None if no territories."""
     owned = db.query(Territory).filter(
         Territory.nation_id == nation_id,
-        Territory.is_colonized == True,
+        Territory.is_owned == True,
     ).all()
     if not owned:
         return None
@@ -97,7 +97,7 @@ def browse_market(
             fuel_richness=float(pd.fuel_richness),
             price=float(lst.price),
             listed_at=lst.listed_at.isoformat(),
-            is_colonized=t.is_colonized,
+            is_owned=t.is_owned,
             colonized_by_name=colonized_by_nation.name if colonized_by_nation else None,
             is_own=is_own,
             already_have=already_have,
@@ -169,7 +169,7 @@ def create_listing(
         fuel_richness=float(pd.fuel_richness),
         price=float(listing.price),
         listed_at=listing.listed_at.isoformat(),
-        is_colonized=t.is_colonized if t else False,
+        is_owned=t.is_owned if t else False,
         colonized_by_name=colonized_by.name if colonized_by else None,
         is_own=True,
         already_have=True,
@@ -257,7 +257,7 @@ def buy_listing(
         fuel_richness=float(pd.fuel_richness),
         price=float(listing.price),
         listed_at=listing.listed_at.isoformat(),
-        is_colonized=t.is_colonized if t else False,
+        is_owned=t.is_owned if t else False,
         colonized_by_name=colonized_by.name if colonized_by else None,
         is_own=False,
         already_have=True,

@@ -173,7 +173,7 @@ function ColonyShipActions({ ship, ownedTerritories, onAction }) {
   }
 
   const maxLoad = Math.min(100 - ship.cargo_population, ship.origin_current_population ?? 0)
-  const destinations = ownedTerritories.filter(t => t.id !== ship.origin_territory_id && t.is_colonized)
+  const destinations = ownedTerritories.filter(t => t.id !== ship.origin_territory_id && t.is_owned)
 
   return (
     <div>
@@ -385,13 +385,13 @@ export default function Military() {
               <Tr key={f.id}>
                 <Td>
                   {f.origin_name || f.origin_node_key}
-                  {f.origin_is_colonized === false && (
+                  {f.origin_is_owned === false && (
                     <Badge color="amber" style={{ marginLeft: 8 }}>Unclaimed</Badge>
                   )}
                 </Td>
                 <Td accent="teal">{f.unit_count}</Td>
                 <Td>
-                  {f.origin_is_colonized === false ? (
+                  {f.origin_is_owned === false ? (
                     <Btn
                       variant="amber"
                       onClick={() => handleClaim(f.id)}

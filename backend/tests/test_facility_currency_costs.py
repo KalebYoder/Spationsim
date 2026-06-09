@@ -57,7 +57,7 @@ def _make_territory(
     db: Session,
     node_key: str,
     nation_id: int | None = None,
-    is_colonized: bool = False,
+    is_owned: bool = False,
     territory_type: str = "normal",
 ) -> Territory:
     t = Territory(
@@ -68,8 +68,8 @@ def _make_territory(
         mineral_richness=2,
         fuel_richness=2,
         distance_from_center=1,
-        is_colonized=is_colonized,
-        colonized_at=datetime.now(timezone.utc) if is_colonized else None,
+        is_owned=is_owned,
+        owned_at=datetime.now(timezone.utc) if is_owned else None,
     )
     db.add(t)
     db.flush()
@@ -97,8 +97,8 @@ def _make_nation_with_resources(
 
 def _colonize(db: Session, nation: Nation, territory: Territory) -> None:
     territory.nation_id = nation.id
-    territory.is_colonized = True
-    territory.colonized_at = datetime.now(timezone.utc)
+    territory.is_owned = True
+    territory.owned_at = datetime.now(timezone.utc)
     db.add(TerritoryPopulation(
         territory_id=territory.id,
         current=POPULATION_START * 10,  # plenty of population to staff
@@ -125,7 +125,7 @@ def auth_client(db: Session, test_player: Player):
 def nation_with_territory(db: Session, test_player: Player):
     """Nation owning one colonized territory with ample resources."""
     nation = _make_nation_with_resources(db, test_player)
-    territory = _make_territory(db, "home-001", nation_id=nation.id, is_colonized=True)
+    territory = _make_territory(db, "home-001", nation_id=nation.id, is_owned=True)
     nation.home_territory_id = territory.id
     db.add(TerritoryPopulation(
         territory_id=territory.id,
@@ -226,7 +226,7 @@ class TestMineCurrencyCost:
         nation = _make_nation_with_resources(
             db, test_player, minerals=1000, fuel=1000, currency=MINE_CURRENCY_COST - 1
         )
-        territory = _make_territory(db, "mine-poor-001", nation_id=nation.id, is_colonized=True)
+        territory = _make_territory(db, "mine-poor-001", nation_id=nation.id, is_owned=True)
         nation.home_territory_id = territory.id
         db.add(TerritoryPopulation(territory_id=territory.id, current=500))
         db.commit()
@@ -267,7 +267,7 @@ class TestRefineryCurrencyCost:
         nation = _make_nation_with_resources(
             db, test_player, minerals=1000, fuel=1000, currency=REFINERY_CURRENCY_COST - 1
         )
-        territory = _make_territory(db, "ref-poor-001", nation_id=nation.id, is_colonized=True)
+        territory = _make_territory(db, "ref-poor-001", nation_id=nation.id, is_owned=True)
         nation.home_territory_id = territory.id
         db.add(TerritoryPopulation(territory_id=territory.id, current=500))
         db.commit()
@@ -308,7 +308,7 @@ class TestShipyardCurrencyCost:
         nation = _make_nation_with_resources(
             db, test_player, minerals=1000, fuel=1000, currency=SHIPYARD_CURRENCY_COST - 1
         )
-        territory = _make_territory(db, "sy-poor-001", nation_id=nation.id, is_colonized=True)
+        territory = _make_territory(db, "sy-poor-001", nation_id=nation.id, is_owned=True)
         nation.home_territory_id = territory.id
         db.add(TerritoryPopulation(territory_id=territory.id, current=500))
         db.commit()
@@ -323,7 +323,7 @@ class TestShipyardCurrencyCost:
         nation = _make_nation_with_resources(
             db, test_player, minerals=1000, fuel=1000, currency=SHIPYARD_CURRENCY_COST
         )
-        territory = _make_territory(db, "sy-exact-001", nation_id=nation.id, is_colonized=True)
+        territory = _make_territory(db, "sy-exact-001", nation_id=nation.id, is_owned=True)
         nation.home_territory_id = territory.id
         db.add(TerritoryPopulation(territory_id=territory.id, current=500))
         db.commit()

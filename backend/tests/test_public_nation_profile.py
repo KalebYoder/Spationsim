@@ -9,7 +9,7 @@ Expected response shape (PublicNationResponse):
   name: str
   flag_color: str
   currency_name: str
-  territory_count: int   — colonized territories only (is_colonized=True AND nation_id=<id>)
+  territory_count: int   — colonized territories only (is_owned=True AND nation_id=<id>)
   military: dict[str, int]   — total unit_count per fleet type across ALL fleet statuses
 
 Authentication: required (401 if no session cookie).
@@ -60,20 +60,20 @@ def _make_territory(
     db: Session,
     nation_id: int | None,
     node_key: str,
-    is_colonized: bool = True,
+    is_owned: bool = True,
     distance_from_center: int = 1,
 ) -> Territory:
     """Insert a territory and return it."""
     t = Territory(
         node_key=node_key,
-        name=f"Planet {node_key}" if is_colonized else None,
+        name=f"Planet {node_key}" if is_owned else None,
         territory_type="normal",
         nation_id=nation_id,
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=distance_from_center,
-        is_colonized=is_colonized,
-        colonized_at=datetime.now(timezone.utc) if is_colonized else None,
+        is_owned=is_owned,
+        owned_at=datetime.now(timezone.utc) if is_owned else None,
     )
     db.add(t)
     db.flush()
@@ -371,7 +371,7 @@ class TestTerritoryCount:
         test_nation: Nation,
     ):
         """Nation with exactly 1 colonized territory must return territory_count=1."""
-        _make_territory(db, test_nation.id, "0,0", is_colonized=True)
+        _make_territory(db, test_nation.id, "0,0", is_owned=True)
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
         assert resp.status_code == 200, resp.text
@@ -387,9 +387,9 @@ class TestTerritoryCount:
         test_nation: Nation,
     ):
         """Nation with 3 colonized territories must return territory_count=3."""
-        _make_territory(db, test_nation.id, "0,0", is_colonized=True, distance_from_center=0)
-        _make_territory(db, test_nation.id, "1,0", is_colonized=True, distance_from_center=1)
-        _make_territory(db, test_nation.id, "2,0", is_colonized=True, distance_from_center=2)
+        _make_territory(db, test_nation.id, "0,0", is_owned=True, distance_from_center=0)
+        _make_territory(db, test_nation.id, "1,0", is_owned=True, distance_from_center=1)
+        _make_territory(db, test_nation.id, "2,0", is_owned=True, distance_from_center=2)
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
         assert resp.status_code == 200, resp.text
@@ -404,17 +404,17 @@ class TestTerritoryCount:
         db: Session,
         test_nation: Nation,
     ):
-        """Territories with is_colonized=False must NOT be counted in territory_count."""
-        _make_territory(db, test_nation.id, "0,0", is_colonized=True)
-        # Add an uncolonized territory — nation_id is set but is_colonized=False
+        """Territories with is_owned=False must NOT be counted in territory_count."""
+        _make_territory(db, test_nation.id, "0,0", is_owned=True)
+        # Add an uncolonized territory — nation_id is set but is_owned=False
         # (edge case: territory assigned to nation but not yet colonized)
-        _make_territory(db, test_nation.id, "1,0", is_colonized=False)
+        _make_territory(db, test_nation.id, "1,0", is_owned=False)
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["territory_count"] == 1, (
-            "Uncolonized territory (is_colonized=False) must NOT be counted. "
+            "Uncolonized territory (is_owned=False) must NOT be counted. "
             f"Expected 1, got {data['territory_count']}"
         )
 
@@ -425,9 +425,9 @@ class TestTerritoryCount:
         test_nation: Nation,
     ):
         """Unowned, uncolonized territory must not affect any nation's territory_count."""
-        _make_territory(db, test_nation.id, "0,0", is_colonized=True)
+        _make_territory(db, test_nation.id, "0,0", is_owned=True)
         # Unowned neutral territory
-        _make_territory(db, None, "5,5", is_colonized=False, distance_from_center=7)
+        _make_territory(db, None, "5,5", is_owned=False, distance_from_center=7)
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
         assert resp.status_code == 200, resp.text
@@ -446,10 +446,10 @@ class TestTerritoryCount:
     ):
         """test_nation's territory_count must not include other_nation's territories."""
         # Give test_nation 1 territory, other_nation 3 territories
-        _make_territory(db, test_nation.id, "0,0", is_colonized=True, distance_from_center=0)
-        _make_territory(db, other_nation.id, "3,0", is_colonized=True, distance_from_center=3)
-        _make_territory(db, other_nation.id, "4,0", is_colonized=True, distance_from_center=4)
-        _make_territory(db, other_nation.id, "5,0", is_colonized=True, distance_from_center=5)
+        _make_territory(db, test_nation.id, "0,0", is_owned=True, distance_from_center=0)
+        _make_territory(db, other_nation.id, "3,0", is_owned=True, distance_from_center=3)
+        _make_territory(db, other_nation.id, "4,0", is_owned=True, distance_from_center=4)
+        _make_territory(db, other_nation.id, "5,0", is_owned=True, distance_from_center=5)
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
         assert resp.status_code == 200, resp.text
@@ -503,7 +503,7 @@ class TestMilitaryStarfighterCount:
         test_nation: Nation,
     ):
         """Single stationed fleet with 10 units → military['starfighter']=10."""
-        origin = _make_territory(db, test_nation.id, "0,0", is_colonized=True)
+        origin = _make_territory(db, test_nation.id, "0,0", is_owned=True)
         _make_fleet(db, test_nation.id, origin.id, unit_count=10, status="stationed")
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
@@ -521,7 +521,7 @@ class TestMilitaryStarfighterCount:
         test_nation: Nation,
     ):
         """Units from multiple fleets must be summed: 10 + 20 + 5 = 35."""
-        origin = _make_territory(db, test_nation.id, "0,0", is_colonized=True)
+        origin = _make_territory(db, test_nation.id, "0,0", is_owned=True)
         _make_fleet(db, test_nation.id, origin.id, unit_count=10, status="stationed")
         _make_fleet(db, test_nation.id, origin.id, unit_count=20, status="stationed")
         _make_fleet(db, test_nation.id, origin.id, unit_count=5, status="stationed")
@@ -542,8 +542,8 @@ class TestMilitaryStarfighterCount:
         other_nation: Nation,
     ):
         """Fleets with status='in_transit' must be counted in military totals."""
-        origin = _make_territory(db, test_nation.id, "0,0", is_colonized=True)
-        dest = _make_territory(db, other_nation.id, "2,0", is_colonized=True, distance_from_center=2)
+        origin = _make_territory(db, test_nation.id, "0,0", is_owned=True)
+        dest = _make_territory(db, other_nation.id, "2,0", is_owned=True, distance_from_center=2)
         _make_fleet(db, test_nation.id, origin.id, unit_count=15, status="in_transit", dest_id=dest.id)
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
@@ -562,8 +562,8 @@ class TestMilitaryStarfighterCount:
         other_nation: Nation,
     ):
         """Fleets with status='pending_confirmation' must be counted in military totals."""
-        origin = _make_territory(db, test_nation.id, "0,0", is_colonized=True)
-        dest = _make_territory(db, other_nation.id, "2,0", is_colonized=True, distance_from_center=2)
+        origin = _make_territory(db, test_nation.id, "0,0", is_owned=True)
+        dest = _make_territory(db, other_nation.id, "2,0", is_owned=True, distance_from_center=2)
         _make_fleet(db, test_nation.id, origin.id, unit_count=8, status="pending_confirmation", dest_id=dest.id)
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
@@ -582,7 +582,7 @@ class TestMilitaryStarfighterCount:
         other_nation: Nation,
     ):
         """Fleets with status='holding' must be counted in military totals."""
-        dest = _make_territory(db, other_nation.id, "2,0", is_colonized=True, distance_from_center=2)
+        dest = _make_territory(db, other_nation.id, "2,0", is_owned=True, distance_from_center=2)
         _make_fleet(db, test_nation.id, dest.id, unit_count=12, status="holding")
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
@@ -601,7 +601,7 @@ class TestMilitaryStarfighterCount:
         other_nation: Nation,
     ):
         """Fleets with status='engaged' must be counted in military totals."""
-        dest = _make_territory(db, other_nation.id, "2,0", is_colonized=True, distance_from_center=2)
+        dest = _make_territory(db, other_nation.id, "2,0", is_owned=True, distance_from_center=2)
         _make_fleet(db, test_nation.id, dest.id, unit_count=7, status="engaged")
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
@@ -620,8 +620,8 @@ class TestMilitaryStarfighterCount:
         other_nation: Nation,
     ):
         """Units from all fleet statuses must be summed together."""
-        origin = _make_territory(db, test_nation.id, "0,0", is_colonized=True, distance_from_center=0)
-        dest = _make_territory(db, other_nation.id, "2,0", is_colonized=True, distance_from_center=2)
+        origin = _make_territory(db, test_nation.id, "0,0", is_owned=True, distance_from_center=0)
+        dest = _make_territory(db, other_nation.id, "2,0", is_owned=True, distance_from_center=2)
 
         # One fleet per status type
         _make_fleet(db, test_nation.id, origin.id, unit_count=10, status="stationed")
@@ -649,8 +649,8 @@ class TestMilitaryStarfighterCount:
         other_nation: Nation,
     ):
         """other_nation's fleets must NOT be counted in test_nation's military total."""
-        origin = _make_territory(db, test_nation.id, "0,0", is_colonized=True, distance_from_center=0)
-        other_origin = _make_territory(db, other_nation.id, "2,0", is_colonized=True, distance_from_center=2)
+        origin = _make_territory(db, test_nation.id, "0,0", is_owned=True, distance_from_center=0)
+        other_origin = _make_territory(db, other_nation.id, "2,0", is_owned=True, distance_from_center=2)
 
         _make_fleet(db, test_nation.id, origin.id, unit_count=10, status="stationed")
         _make_fleet(db, other_nation.id, other_origin.id, unit_count=999, status="stationed")
@@ -670,7 +670,7 @@ class TestMilitaryStarfighterCount:
         test_nation: Nation,
     ):
         """military['starfighter'] must be serialized as an integer."""
-        origin = _make_territory(db, test_nation.id, "0,0", is_colonized=True)
+        origin = _make_territory(db, test_nation.id, "0,0", is_owned=True)
         _make_fleet(db, test_nation.id, origin.id, unit_count=5, status="stationed")
 
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
@@ -734,10 +734,10 @@ class TestIsolation:
     ):
         """territory_count returned must reflect other_nation's territories, not test_nation's."""
         # Give test_nation 1 territory, other_nation 3 territories
-        _make_territory(db, test_nation.id, "0,0", is_colonized=True, distance_from_center=0)
-        _make_territory(db, other_nation.id, "3,0", is_colonized=True, distance_from_center=3)
-        _make_territory(db, other_nation.id, "4,0", is_colonized=True, distance_from_center=4)
-        _make_territory(db, other_nation.id, "5,0", is_colonized=True, distance_from_center=5)
+        _make_territory(db, test_nation.id, "0,0", is_owned=True, distance_from_center=0)
+        _make_territory(db, other_nation.id, "3,0", is_owned=True, distance_from_center=3)
+        _make_territory(db, other_nation.id, "4,0", is_owned=True, distance_from_center=4)
+        _make_territory(db, other_nation.id, "5,0", is_owned=True, distance_from_center=5)
 
         resp = auth_client.get(f"/api/nations/{other_nation.id}")
         assert resp.status_code == 200, resp.text
@@ -755,8 +755,8 @@ class TestIsolation:
         other_nation: Nation,
     ):
         """military returned must reflect other_nation's fleets, not test_nation's."""
-        own_origin = _make_territory(db, test_nation.id, "0,0", is_colonized=True, distance_from_center=0)
-        other_origin = _make_territory(db, other_nation.id, "2,0", is_colonized=True, distance_from_center=2)
+        own_origin = _make_territory(db, test_nation.id, "0,0", is_owned=True, distance_from_center=0)
+        other_origin = _make_territory(db, other_nation.id, "2,0", is_owned=True, distance_from_center=2)
 
         # test_nation has 100 fighters; other_nation has 42
         _make_fleet(db, test_nation.id, own_origin.id, unit_count=100, status="stationed")
@@ -778,7 +778,7 @@ class TestIsolation:
         other_nation: Nation,
     ):
         """Player B authenticated client can also view Player A's nation correctly."""
-        origin = _make_territory(db, test_nation.id, "0,0", is_colonized=True)
+        origin = _make_territory(db, test_nation.id, "0,0", is_owned=True)
         _make_fleet(db, test_nation.id, origin.id, unit_count=20, status="stationed")
 
         resp = other_auth_client.get(f"/api/nations/{test_nation.id}")
@@ -864,7 +864,7 @@ class TestFieldCorrectness:
         test_nation: Nation,
     ):
         """territory_count must be serialized as an integer, not a string."""
-        _make_territory(db, test_nation.id, "0,0", is_colonized=True)
+        _make_territory(db, test_nation.id, "0,0", is_owned=True)
         resp = auth_client.get(f"/api/nations/{test_nation.id}")
         assert resp.status_code == 200, resp.text
         data = resp.json()

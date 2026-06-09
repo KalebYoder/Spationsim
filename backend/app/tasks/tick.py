@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from math import ceil
-from sqlalchemy import or_, text, func as sqlfunc
+from sqlalchemy import or_, and_, text, func as sqlfunc
 from ..celery_app import celery_app
 from ..db.database import SessionLocal
 from ..models.colony_ship import ColonyShip
@@ -33,6 +33,7 @@ from ..constants import (
     DISSENT_LOPSIDED_MULTIPLIER, DISSENT_OFFICE_BONUS_AGGRESSOR,
     HOME_TERRITORY_DEFENSE_MULTIPLIER,
     HOLDING_ATTRITION_RATE,
+    DEFENDER_AUTO_ROUT_FRACTION,
 )
 from ..services.dissent import compute_territory_dissent_delta
 from ..map_gen import generate_territory
@@ -512,13 +513,31 @@ def run_tick():
                     status="processed",
                 ))
 
-        # Process engaged fleets (combat resolution per tick)
-        engaged_fleets = (
+        # Snapshot fleet presence BEFORE combat so dissent reflects this tick's battle state.
+        # engaged/holding fleets transition to occupying/post_battle_choice during combat,
+        # so we must capture the starting status here before the combat loop mutates it.
+        holding_on: set[int] = set()   # territory_ids with a holding enemy fleet
+        engaged_on: set[int] = set()   # territory_ids with an engaged enemy fleet
+        for _sf in db.query(Fleet).filter(Fleet.status.in_(["holding", "engaged", "occupying"])).all():
+            _sf_dest = db.get(Territory, _sf.destination_territory)
+            if _sf_dest and _sf_dest.nation_id and _sf_dest.nation_id != _sf.nation_id:
+                if _sf.status in ("holding", "occupying"):
+                    holding_on.add(_sf_dest.id)
+                else:
+                    engaged_on.add(_sf_dest.id)
+
+        # Process engaged fleets and holding fleets with standing_order='engage' (combat resolution per tick)
+        combat_fleets = (
             db.query(Fleet)
-            .filter(Fleet.status == "engaged")
+            .filter(
+                or_(
+                    Fleet.status == "engaged",
+                    and_(Fleet.status == "holding", Fleet.standing_order == "engage")
+                )
+            )
             .all()
         )
-        for fleet in engaged_fleets:
+        for fleet in combat_fleets:
             dest = db.get(Territory, fleet.destination_territory)
             if not dest:
                 continue
@@ -547,7 +566,7 @@ def run_tick():
                 defender_count = defender_fleet.unit_count
                 multiplier = (
                     HOME_TERRITORY_DEFENSE_MULTIPLIER
-                    if dest.is_colonized and dest.nation_id == defender_fleet.nation_id
+                    if dest.is_owned and dest.nation_id == defender_fleet.nation_id
                     else 1.0
                 )
                 attacker_losses, defender_losses = resolve_combat_tick(
@@ -579,6 +598,29 @@ def run_tick():
                     status="processed",
                 ))
 
+                # Defender auto-rout: bonus damage when defender survived and attacker took losses.
+                # Fires even if attacker was already wiped in normal combat (fleet.unit_count may be 0).
+                # bonus_damage records the raw formula result; actual damage applied is capped at remaining fleet.
+                if attacker_losses > 0 and defender_fleet.unit_count > 0:
+                    auto_rout_bonus = max(1, round(attacker_losses * DEFENDER_AUTO_ROUT_FRACTION))
+                    actual_auto_rout = min(auto_rout_bonus, fleet.unit_count)
+                    fleet.unit_count -= actual_auto_rout
+                    db.add(Event(
+                        type="auto_rout_applied",
+                        payload={
+                            "fleet_id": fleet.id,
+                            "attacker_nation_id": fleet.nation_id,
+                            "defender_nation_id": dest.nation_id,
+                            "territory_id": dest.id,
+                            "bonus_damage": auto_rout_bonus,
+                            "damage_applied": actual_auto_rout,
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+
                 if fleet.unit_count == 0:
                     db.add(Event(
                         type="fleet_destroyed_in_combat",
@@ -595,8 +637,9 @@ def run_tick():
                     db.delete(fleet)
                 else:
                     # Attacker survived — pause for post-battle choice (Rout/Raid/Raze).
-                    # Fleet resumes combat next tick if no choice made within 1 tick window.
+                    # standing_order resets to 'hold' so inaction on PBC expiry is safe.
                     fleet.status = "post_battle_choice"
+                    fleet.standing_order = "hold"
                     fleet.confirmation_expires_at = tick_at + timedelta(hours=2)
 
             else:
@@ -617,15 +660,22 @@ def run_tick():
                     status="processed",
                 ))
 
-        # Return expired post_battle_choice fleets to engaged — they resume combat next tick
+        # Expired post_battle_choice fleets go to holding by default (inaction = safe).
+        # Exception: if the destination territory has sortie_queued=True, go to engaged instead.
         expired_pbc = (
             db.query(Fleet)
             .filter(Fleet.status == "post_battle_choice", Fleet.confirmation_expires_at <= tick_at)
             .all()
         )
         for fleet in expired_pbc:
-            fleet.status = "engaged"
             fleet.confirmation_expires_at = None
+            fleet.standing_order = "hold"
+            dest_territory = db.get(Territory, fleet.destination_territory) if fleet.destination_territory else None
+            if dest_territory and getattr(dest_territory, "sortie_queued", False):
+                fleet.status = "engaged"
+                dest_territory.sortie_queued = False
+            else:
+                fleet.status = "holding"
 
         # territory_id -> set of nation_ids with stationed fleets there
         stationed_at: dict[int, set[int]] = {}
@@ -738,18 +788,7 @@ def run_tick():
                 ))
 
         # ── Dissent update ────────────────────────────────────────────────────
-        # Build per-territory fleet-presence map from current fleet statuses.
-        # holding/engaged fleets sit at destination_territory (their launch point
-        # is origin_territory, which is the attacker's own colony — not the target).
-        holding_on: set[int] = set()   # territory_ids with a holding enemy fleet
-        engaged_on: set[int] = set()   # territory_ids with an engaged enemy fleet
-        for fleet in db.query(Fleet).filter(Fleet.status.in_(["holding", "engaged", "occupying"])).all():
-            dest = db.get(Territory, fleet.destination_territory)
-            if dest and dest.nation_id and dest.nation_id != fleet.nation_id:
-                if fleet.status in ("holding", "occupying"):
-                    holding_on.add(dest.id)
-                else:
-                    engaged_on.add(dest.id)
+        # holding_on/engaged_on were snapshotted before the combat loop above.
 
         # Propaganda Office presence: set of territory_ids with an active office
         office_territories: set[int] = {
@@ -790,7 +829,7 @@ def run_tick():
         }
 
         # Process dissent for every colonized territory
-        for t in db.query(Territory).filter(Territory.is_colonized == True).all():
+        for t in db.query(Territory).filter(Territory.is_owned == True).all():
             if t.nation_id is None:
                 continue
             if t.nation_id in vacation_nation_ids:
@@ -846,7 +885,30 @@ def run_tick():
             .all()
         )
         for ship in arrived_colony_ships:
-            dest_key = db.get(Territory, ship.destination_territory)
+            dest_territory = db.get(Territory, ship.destination_territory)
+
+            claimed_now = False
+            if dest_territory and dest_territory.nation_id is None:
+                dest_territory.nation_id = ship.nation_id
+                dest_territory.is_owned = True
+                dest_territory.owned_at = tick_at
+                claimed_now = True
+                if not db.query(TerritoryDissent).filter(TerritoryDissent.territory_id == dest_territory.id).first():
+                    db.add(TerritoryDissent(territory_id=dest_territory.id, dissent=0))
+                db.add(Event(
+                    type="territory_claimed",
+                    payload={
+                        "nation_id": ship.nation_id,
+                        "territory_id": dest_territory.id,
+                        "node_key": dest_territory.node_key if dest_territory else None,
+                        "claimed_by": "colony_ship",
+                        "tick_at": tick_at.isoformat(),
+                    },
+                    scheduled_for=tick_at,
+                    processed_at=tick_at,
+                    status="processed",
+                ))
+
             ship.status = "stationed"
             ship.origin_territory = ship.destination_territory
             ship.destination_territory = None
@@ -858,7 +920,8 @@ def run_tick():
                     "ship_id": ship.id,
                     "nation_id": ship.nation_id,
                     "territory_id": ship.origin_territory,
-                    "territory_node_key": dest_key.node_key if dest_key else None,
+                    "territory_node_key": dest_territory.node_key if dest_territory else None,
+                    "claimed_now": claimed_now,
                     "tick_at": tick_at.isoformat(),
                 },
                 scheduled_for=tick_at,
@@ -868,7 +931,7 @@ def run_tick():
             if ship.nation_id:
                 colonized_count = db.query(Territory).filter(
                     Territory.nation_id == ship.nation_id,
-                    Territory.is_colonized == True,
+                    Territory.is_owned == True,
                 ).count()
                 if colonized_count >= 2:
                     tutorial = db.query(TutorialState).filter(

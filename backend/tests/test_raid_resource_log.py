@@ -157,8 +157,8 @@ def attacker_territory(db: Session, attacker_nation: Nation) -> Territory:
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=0,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
@@ -175,8 +175,8 @@ def defender_territory(db: Session, defender_nation: Nation) -> Territory:
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=2,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()

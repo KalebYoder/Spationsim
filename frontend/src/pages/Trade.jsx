@@ -217,7 +217,7 @@ function ProposeForm({ nations, myNation, onProposed }) {
           </div>
           <select value={offerTerritoryId} onChange={e => setOfferTerritoryId(e.target.value)} style={{ ...INPUT, width: '100%', textAlign: 'left' }}>
             <option value="">— None —</option>
-            {myTerritories.filter(t => t.is_colonized).map(t => (
+            {myTerritories.filter(t => t.is_owned).map(t => (
               <option key={t.id} value={t.id}>{t.name || t.node_key}</option>
             ))}
           </select>
@@ -228,20 +228,20 @@ function ProposeForm({ nations, myNation, onProposed }) {
           </div>
           <select value={requestTerritoryId} onChange={e => setRequestTerritoryId(e.target.value)} style={{ ...INPUT, width: '100%', textAlign: 'left' }}>
             <option value="">— None —</option>
-            {theirTerritories.filter(t => t.is_colonized).map(t => (
+            {theirTerritories.filter(t => t.is_owned).map(t => (
               <option key={t.id} value={t.id}>{t.name || t.node_key}</option>
             ))}
           </select>
         </div>
       </div>
 
-      {myProbeData.filter(pd => !pd.is_colonized).length > 0 && (
+      {myProbeData.filter(pd => !pd.is_owned).length > 0 && (
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
             Offer probe data (optional)
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '8px 10px' }}>
-            {myProbeData.filter(pd => !pd.is_colonized).map(pd => (
+            {myProbeData.filter(pd => !pd.is_owned).map(pd => (
               <label key={pd.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
                 <input
                   type="checkbox"
@@ -433,7 +433,7 @@ function EditTradeForm({ trade, onEdited, onCancel }) {
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Offer territory</div>
           <select value={offerTerritoryId} onChange={e => setOfferTerritoryId(e.target.value)} style={{ ...INPUT, width: '100%', textAlign: 'left' }}>
             <option value="">— None —</option>
-            {fromTerritories.filter(t => t.is_colonized).map(t => (
+            {fromTerritories.filter(t => t.is_owned).map(t => (
               <option key={t.id} value={t.id}>{t.name || t.node_key}</option>
             ))}
           </select>
@@ -442,7 +442,7 @@ function EditTradeForm({ trade, onEdited, onCancel }) {
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Request territory</div>
           <select value={requestTerritoryId} onChange={e => setRequestTerritoryId(e.target.value)} style={{ ...INPUT, width: '100%', textAlign: 'left' }}>
             <option value="">— None —</option>
-            {toTerritories.filter(t => t.is_colonized).map(t => (
+            {toTerritories.filter(t => t.is_owned).map(t => (
               <option key={t.id} value={t.id}>{t.name || t.node_key}</option>
             ))}
           </select>

@@ -33,7 +33,7 @@ from ..schemas.nation import (
 from ..routers.auth import get_current_player
 from ..routers.diplomacy import is_at_war, get_diplomacy_status
 from ..routers.tutorial import _apply_tutorial_action
-from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST
+from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST, RAID_CAP_FRACTION
 
 router = APIRouter(prefix="/api/military", tags=["military"])
 
@@ -86,7 +86,7 @@ def _fleet_response(fleet: Fleet, db: Session) -> FleetResponse:
         origin_territory_id=fleet.origin_territory,
         origin_node_key=origin.node_key if origin else None,
         origin_name=origin.name if origin else None,
-        origin_is_colonized=origin.is_colonized if origin else None,
+        origin_is_owned=origin.is_owned if origin else None,
         origin_nation_id=origin.nation_id if origin else None,
         destination_territory_id=fleet.destination_territory,
         destination_node_key=dest.node_key if dest else None,
@@ -509,8 +509,8 @@ def occupy_territory(
     former_owner_id = dest.nation_id
 
     dest.nation_id = nation.id
-    dest.is_colonized = True
-    dest.colonized_at = now
+    dest.is_owned = True
+    dest.owned_at = now
 
     # Remove stale probe data — conquered territory is now visible on the map
     for pd in db.query(ProbeData).filter(ProbeData.territory_id == dest.id).all():
@@ -565,7 +565,7 @@ def occupy_territory(
     db.flush()
     colonized_count = db.query(Territory).filter(
         Territory.nation_id == nation.id,
-        Territory.is_colonized == True,
+        Territory.is_owned == True,
     ).count()
     if colonized_count >= 2:
         _apply_tutorial_action(nation.id, "colonize_territory", db)
@@ -579,7 +579,7 @@ def occupy_territory(
         node_key=dest.node_key,
         name=dest.name,
         nation_id=dest.nation_id,
-        colonized_at=dest.colonized_at.isoformat(),
+        owned_at=dest.owned_at.isoformat(),
     )
 
 
@@ -692,15 +692,15 @@ def raid_fleet(
 
     minerals_stolen = min(
         random.uniform(0.5 * firepower, 1.5 * firepower),
-        float(defender_nation.minerals),
+        float(defender_nation.minerals) * RAID_CAP_FRACTION,
     )
     fuel_stolen = min(
         random.uniform(0.5 * firepower, 1.5 * firepower),
-        float(defender_nation.fuel),
+        float(defender_nation.fuel) * RAID_CAP_FRACTION,
     )
     currency_stolen = min(
         random.uniform(0.5 * firepower, 1.5 * firepower),
-        float(defender_nation.currency),
+        float(defender_nation.currency) * RAID_CAP_FRACTION,
     )
 
     defender_nation.minerals -= minerals_stolen
@@ -758,6 +758,65 @@ def raze_fleet(
     raise HTTPException(status_code=409, detail="Raze is not yet implemented")
 
 
+SORTIE_COOLDOWN_HOURS = 4
+
+
+@router.post("/fleets/{fleet_id}/sortie", response_model=FleetResponse)
+def sortie_fleet(
+    fleet_id: int,
+    db: Session = Depends(get_db),
+    player: Player = Depends(get_current_player),
+):
+    nation = db.query(Nation).filter(Nation.player_id == player.id).first()
+    if not nation:
+        raise HTTPException(status_code=404, detail="No nation found")
+
+    fleet = db.get(Fleet, fleet_id)
+    if not fleet or fleet.nation_id != nation.id:
+        raise HTTPException(status_code=403, detail="Fleet not found or does not belong to you")
+
+    if fleet.status != "stationed":
+        raise HTTPException(status_code=409, detail="Only stationed fleets can sortie")
+
+    territory = db.get(Territory, fleet.origin_territory)
+    if not territory or territory.nation_id != nation.id:
+        raise HTTPException(status_code=409, detail="Fleet must be stationed at your own territory to sortie")
+
+    now = datetime.now(timezone.utc)
+    last_sortie = getattr(territory, "last_sortie_at", None)
+    if last_sortie is not None:
+        last_sortie_aware = last_sortie.replace(tzinfo=timezone.utc) if last_sortie.tzinfo is None else last_sortie
+        if (now - last_sortie_aware).total_seconds() < SORTIE_COOLDOWN_HOURS * 3600:
+            raise HTTPException(status_code=429, detail=f"Sortie cooldown active. Try again in {SORTIE_COOLDOWN_HOURS} hours.")
+
+    # Find an enemy fleet at this territory (holding, occupying, or post_battle_choice)
+    enemy_fleet = (
+        db.query(Fleet)
+        .filter(
+            Fleet.destination_territory == territory.id,
+            Fleet.status.in_(["holding", "occupying", "post_battle_choice"]),
+        )
+        .filter(Fleet.nation_id != nation.id)
+        .first()
+    )
+
+    if not enemy_fleet:
+        raise HTTPException(status_code=409, detail="No holding or occupying enemy fleet at this territory")
+
+    territory.last_sortie_at = now
+
+    if enemy_fleet.status == "post_battle_choice":
+        territory.sortie_queued = True
+    else:
+        enemy_fleet.status = "engaged"
+        if hasattr(enemy_fleet, "occupation_expires_at"):
+            enemy_fleet.occupation_expires_at = None
+
+    db.commit()
+    db.refresh(fleet)
+    return _fleet_response(fleet, db)
+
+
 @router.post("/fleets/{fleet_id}/claim", response_model=ClaimTerritoryResponse)
 def claim_territory(
     fleet_id: int,
@@ -782,14 +841,14 @@ def claim_territory(
     if territory.territory_type != "normal":
         raise HTTPException(status_code=409, detail="Only normal territories can be claimed")
 
-    if territory.is_colonized:
+    if territory.is_owned:
         raise HTTPException(status_code=409, detail="Territory is already claimed")
 
     now = datetime.now(timezone.utc)
     former_owner_id = territory.nation_id
-    territory.is_colonized = True
+    territory.is_owned = True
     territory.nation_id = nation.id
-    territory.colonized_at = now
+    territory.owned_at = now
 
     # Create dissent row at 0 for this newly-colonized territory
     if not db.query(TerritoryDissent).filter(TerritoryDissent.territory_id == territory.id).first():
@@ -830,7 +889,7 @@ def claim_territory(
     db.flush()
     colonized_count = db.query(Territory).filter(
         Territory.nation_id == nation.id,
-        Territory.is_colonized == True,
+        Territory.is_owned == True,
     ).count()
     if colonized_count >= 2:
         _apply_tutorial_action(nation.id, "colonize_territory", db)
@@ -844,7 +903,7 @@ def claim_territory(
         node_key=territory.node_key,
         name=territory.name,
         nation_id=territory.nation_id,
-        colonized_at=territory.colonized_at.isoformat(),
+        owned_at=territory.owned_at.isoformat(),
     )
 
 
@@ -866,7 +925,7 @@ def _colony_ship_response(ship: ColonyShip, db: Session) -> ColonyShipResponse:
         origin_territory_id=ship.origin_territory,
         origin_node_key=origin.node_key if origin else None,
         origin_name=origin.name if origin else None,
-        origin_is_colonized=origin.is_colonized if origin else None,
+        origin_is_owned=origin.is_owned if origin else None,
         origin_nation_id=origin.nation_id if origin else None,
         origin_current_population=origin_pop,
         destination_territory_id=ship.destination_territory,
@@ -976,8 +1035,10 @@ def send_colony_ship(
         raise HTTPException(status_code=404, detail="Destination territory not found")
     if dest.id == origin.id:
         raise HTTPException(status_code=409, detail="Origin and destination must differ")
-    if not dest.is_colonized or dest.nation_id != nation.id:
-        raise HTTPException(status_code=409, detail="Colony ships can only travel to your own colonized territories")
+    if dest.territory_type == "void":
+        raise HTTPException(status_code=409, detail="Colony ships cannot travel to void space")
+    if dest.nation_id is not None and dest.nation_id != nation.id:
+        raise HTTPException(status_code=409, detail="Colony ships cannot travel to territory owned by another nation")
 
     all_territories = db.query(Territory).all()
     territory_dicts = [
@@ -1023,8 +1084,8 @@ def load_colony_ship(
         raise HTTPException(status_code=409, detail="Colony ship must be stationed to load population")
 
     territory = db.get(Territory, ship.origin_territory)
-    if not territory or territory.nation_id != nation.id or not territory.is_colonized:
-        raise HTTPException(status_code=409, detail="Colony ship is not at a colonized territory you own")
+    if not territory or territory.nation_id != nation.id or not territory.is_owned:
+        raise HTTPException(status_code=409, detail="Colony ship is not at a territory you own")
     if territory.territory_type != "normal":
         raise HTTPException(status_code=409, detail="Cannot load population from void space")
 
@@ -1075,8 +1136,8 @@ def unload_colony_ship(
         raise HTTPException(status_code=409, detail="Colony ship must be stationed to unload population")
 
     territory = db.get(Territory, ship.origin_territory)
-    if not territory or territory.nation_id != nation.id or not territory.is_colonized:
-        raise HTTPException(status_code=409, detail="Colony ship is not at a colonized territory you own")
+    if not territory or territory.nation_id != nation.id or not territory.is_owned:
+        raise HTTPException(status_code=409, detail="Colony ship is not at a territory you own")
     if territory.territory_type != "normal":
         raise HTTPException(status_code=409, detail="Cannot unload population into void space")
 

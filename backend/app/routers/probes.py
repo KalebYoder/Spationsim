@@ -133,7 +133,7 @@ def dispatch_probe(
         raise HTTPException(status_code=409, detail="No probes in reserve")
 
     from_t = db.get(Territory, body.from_territory_id)
-    if not from_t or from_t.nation_id != nation.id or not from_t.is_colonized:
+    if not from_t or from_t.nation_id != nation.id or not from_t.is_owned:
         raise HTTPException(status_code=409, detail="Origin must be an owned, colonized territory")
     if from_t.territory_type == "void":
         raise HTTPException(status_code=409, detail="Cannot launch from void territory")
@@ -146,7 +146,7 @@ def dispatch_probe(
 
     owned_territories = (
         db.query(Territory)
-        .filter(Territory.nation_id == nation.id, Territory.is_colonized == True)
+        .filter(Territory.nation_id == nation.id, Territory.is_owned == True)
         .all()
     )
 
@@ -275,7 +275,7 @@ def get_probe_data(
             mineral_richness=float(pd.mineral_richness),
             fuel_richness=float(pd.fuel_richness),
             discovered_at=pd.discovered_at.isoformat(),
-            is_colonized=t.is_colonized,
+            is_owned=t.is_owned,
             nation_id=n.id if n else None,
             nation_name=n.name if n else None,
         ))

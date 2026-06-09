@@ -138,8 +138,8 @@ def home_territory(db: Session, test_nation: Nation) -> Territory:
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=0,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
@@ -157,8 +157,8 @@ def enemy_territory(db: Session, enemy_nation: Nation) -> Territory:
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=2,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
@@ -176,7 +176,7 @@ def neutral_territory(db: Session) -> Territory:
         mineral_richness=0.50,
         fuel_richness=0.50,
         distance_from_center=1,
-        is_colonized=False,
+        is_owned=False,
     )
     db.add(t)
     db.flush()
@@ -194,7 +194,7 @@ def third_territory(db: Session) -> Territory:
         mineral_richness=0.50,
         fuel_richness=0.50,
         distance_from_center=4,
-        is_colonized=False,
+        is_owned=False,
     )
     db.add(t)
     db.flush()
@@ -559,8 +559,8 @@ class TestTickFleetArrivalAtEnemyTerritory:
             mineral_richness=1.0,
             fuel_richness=1.0,
             distance_from_center=2,
-            is_colonized=True,
-            colonized_at=now,
+            is_owned=True,
+            owned_at=now,
         )
         db.add(dest)
         db.flush()
@@ -640,8 +640,8 @@ class TestTickFleetArrivalAtEnemyTerritory:
             mineral_richness=1.0,
             fuel_richness=1.0,
             distance_from_center=2,
-            is_colonized=True,
-            colonized_at=now,
+            is_owned=True,
+            owned_at=now,
         )
         db.add(dest)
         db.flush()
@@ -1316,8 +1316,8 @@ class TestConfirmAttackEndpoint:
             mineral_richness=1.0,
             fuel_richness=1.0,
             distance_from_center=3,
-            is_colonized=True,
-            colonized_at=now,
+            is_owned=True,
+            owned_at=now,
         )
         db.add(second_own)
         db.flush()

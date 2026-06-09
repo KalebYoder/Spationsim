@@ -102,8 +102,8 @@ def home_territory(db: Session, test_nation: Nation) -> Territory:
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=0,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
@@ -121,8 +121,8 @@ def enemy_territory(db: Session, enemy_nation: Nation) -> Territory:
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=2,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
@@ -140,7 +140,7 @@ def neutral_territory(db: Session) -> Territory:
         mineral_richness=0.50,
         fuel_richness=0.50,
         distance_from_center=1,
-        is_colonized=False,
+        is_owned=False,
     )
     db.add(t)
     db.flush()
@@ -359,6 +359,7 @@ class TestFleetDispatchWarBehaviour:
         enemy_nation: Nation,
         home_territory: Territory,
         enemy_territory: Territory,
+        neutral_territory: Territory,
     ):
         """
         Dispatching a fleet to a war-enemy territory must result in the fleet
@@ -750,7 +751,7 @@ class TestProbeDestructionInEnemyTerritory:
             mineral_richness=0.50,
             fuel_richness=0.50,
             distance_from_center=3,
-            is_colonized=False,
+            is_owned=False,
         )
         db.add(dest)
         db.flush()
@@ -857,6 +858,7 @@ class TestCombatRequiresWar:
         enemy_nation: Nation,
         home_territory: Territory,
         enemy_territory: Territory,
+        neutral_territory: Territory,
     ):
         """
         With an active war declaration, dispatching a fleet toward an enemy

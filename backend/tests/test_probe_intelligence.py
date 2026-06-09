@@ -7,7 +7,7 @@ The "Your Intelligence" table in the probe window shows:
   - Mineral richness (float)
   - Fuel richness (float)
   - Time scouted (discovered_at — ISO datetime string)
-  - Status (is_colonized, nation_name)
+  - Status (is_owned, nation_name)
 
 Tests verify the response contract the frontend relies on, covering field
 presence, nullability, ordering, and per-nation isolation.
@@ -49,7 +49,7 @@ def _make_territory(
     node_key: str,
     name: str | None = None,
     nation_id: int | None = None,
-    is_colonized: bool = False,
+    is_owned: bool = False,
     mineral_richness: float = 1.50,
     fuel_richness: float = 0.75,
 ) -> Territory:
@@ -61,8 +61,8 @@ def _make_territory(
         mineral_richness=mineral_richness,
         fuel_richness=fuel_richness,
         distance_from_center=3,
-        is_colonized=is_colonized,
-        colonized_at=datetime.now(timezone.utc) if is_colonized else None,
+        is_owned=is_owned,
+        owned_at=datetime.now(timezone.utc) if is_owned else None,
     )
     db.add(t)
     db.flush()
@@ -259,18 +259,18 @@ class TestResponseFields:
         dt = datetime.fromisoformat(row["discovered_at"].replace("Z", "+00:00"))
         assert dt is not None
 
-    def test_is_colonized_field_present(
+    def test_is_owned_field_present(
         self, auth_client: TestClient, db: Session, test_nation: Nation
     ):
-        """Status column requires is_colonized boolean."""
+        """Status column requires is_owned boolean."""
         t = _make_territory(db, "5,9")
         _make_probe_data(db, t.id, test_nation.id)
         db.commit()
 
         resp = auth_client.get("/api/probes/data")
         row = resp.json()[0]
-        assert "is_colonized" in row
-        assert isinstance(row["is_colonized"], bool)
+        assert "is_owned" in row
+        assert isinstance(row["is_owned"], bool)
 
     def test_all_display_fields_present_in_single_row(
         self, auth_client: TestClient, db: Session, test_nation: Nation
@@ -283,7 +283,7 @@ class TestResponseFields:
         resp = auth_client.get("/api/probes/data")
         row = resp.json()[0]
         required = {"node_key", "territory_name", "mineral_richness", "fuel_richness",
-                    "discovered_at", "is_colonized", "nation_name"}
+                    "discovered_at", "is_owned", "nation_name"}
         missing = required - set(row.keys())
         assert not missing, f"Missing fields in probe data response: {missing}"
 
@@ -330,41 +330,41 @@ class TestColonizationStatus:
     def test_unclaimed_territory_is_not_colonized(
         self, auth_client: TestClient, db: Session, test_nation: Nation
     ):
-        """Unclaimed territory: is_colonized=false, nation_name=null."""
-        t = _make_territory(db, "8,0", is_colonized=False)
+        """Unclaimed territory: is_owned=false, nation_name=null."""
+        t = _make_territory(db, "8,0", is_owned=False)
         _make_probe_data(db, t.id, test_nation.id)
         db.commit()
 
         resp = auth_client.get("/api/probes/data")
         row = resp.json()[0]
-        assert row["is_colonized"] is False
+        assert row["is_owned"] is False
         assert row["nation_name"] is None
 
     def test_colonized_territory_shows_owner_name(
         self, auth_client: TestClient, db: Session,
         test_nation: Nation, other_nation: Nation
     ):
-        """Colonized territory: is_colonized=true, nation_name is the owner's name."""
-        t = _make_territory(db, "8,1", nation_id=other_nation.id, is_colonized=True)
+        """Colonized territory: is_owned=true, nation_name is the owner's name."""
+        t = _make_territory(db, "8,1", nation_id=other_nation.id, is_owned=True)
         _make_probe_data(db, t.id, test_nation.id)
         db.commit()
 
         resp = auth_client.get("/api/probes/data")
         row = resp.json()[0]
-        assert row["is_colonized"] is True
+        assert row["is_owned"] is True
         assert row["nation_name"] == other_nation.name
 
     def test_own_colonized_territory_shows_own_name(
         self, auth_client: TestClient, db: Session, test_nation: Nation
     ):
-        """A probe discovering your own territory: is_colonized=true, nation_name=your nation."""
-        t = _make_territory(db, "8,2", nation_id=test_nation.id, is_colonized=True)
+        """A probe discovering your own territory: is_owned=true, nation_name=your nation."""
+        t = _make_territory(db, "8,2", nation_id=test_nation.id, is_owned=True)
         _make_probe_data(db, t.id, test_nation.id)
         db.commit()
 
         resp = auth_client.get("/api/probes/data")
         row = resp.json()[0]
-        assert row["is_colonized"] is True
+        assert row["is_owned"] is True
         assert row["nation_name"] == test_nation.name
 
 

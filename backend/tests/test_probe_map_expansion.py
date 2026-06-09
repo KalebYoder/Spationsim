@@ -62,8 +62,8 @@ def _territory_at(node_key: str, nation_id: int, db: Session) -> Territory:
         fuel_richness=3,
         distance_from_center=0,
         nation_id=nation_id,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()

@@ -45,8 +45,8 @@ def _make_territory(db: Session, nation_id: int, node_key: str = "10,10") -> Ter
         mineral_richness=1.00,
         fuel_richness=1.00,
         distance_from_center=5,
-        is_colonized=True,
-        colonized_at=datetime.now(timezone.utc),
+        is_owned=True,
+        owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
     db.flush()
