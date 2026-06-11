@@ -18,6 +18,7 @@ from ..models.territory_dissent import TerritoryDissent
 from ..models.resource_log import ResourceLog
 from ..models.player import Player
 from ..services.pathfinding import compute_reachable_ids
+from ..services.territory_yield import compute_territory_yield
 from ..schemas.nation import (
     ClaimTerritoryResponse,
     ColonyShipCargoRequest,
@@ -33,7 +34,7 @@ from ..schemas.nation import (
 from ..routers.auth import get_current_player
 from ..routers.diplomacy import is_at_war, get_diplomacy_status
 from ..routers.tutorial import _apply_tutorial_action
-from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST, RAID_CAP_FRACTION
+from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST, RAID_PRODUCTION_TICKS_CAP
 
 router = APIRouter(prefix="/api/military", tags=["military"])
 
@@ -690,17 +691,41 @@ def raid_fleet(
     now = datetime.now(timezone.utc)
     firepower = fleet.unit_count * UNIT_STATS["starfighter"]["firepower"]
 
+    mine_count = db.query(Infrastructure).filter(
+        Infrastructure.territory_id == dest.id,
+        Infrastructure.type == "mine",
+        Infrastructure.status == "active",
+    ).count()
+    refinery_count = db.query(Infrastructure).filter(
+        Infrastructure.territory_id == dest.id,
+        Infrastructure.type == "refinery",
+        Infrastructure.status == "active",
+    ).count()
+    territory_yield = compute_territory_yield(
+        dest.territory_type,
+        float(dest.mineral_richness),
+        float(dest.fuel_richness),
+        mine_count,
+        refinery_count,
+    )
+    minerals_cap = territory_yield["minerals_per_tick"] * RAID_PRODUCTION_TICKS_CAP
+    fuel_cap = territory_yield["fuel_per_tick"] * RAID_PRODUCTION_TICKS_CAP
+    currency_cap = territory_yield["currency_income_per_tick"] * RAID_PRODUCTION_TICKS_CAP
+
     minerals_stolen = min(
         random.uniform(0.5 * firepower, 1.5 * firepower),
-        float(defender_nation.minerals) * RAID_CAP_FRACTION,
+        minerals_cap,
+        float(defender_nation.minerals),
     )
     fuel_stolen = min(
         random.uniform(0.5 * firepower, 1.5 * firepower),
-        float(defender_nation.fuel) * RAID_CAP_FRACTION,
+        fuel_cap,
+        float(defender_nation.fuel),
     )
     currency_stolen = min(
         random.uniform(0.5 * firepower, 1.5 * firepower),
-        float(defender_nation.currency) * RAID_CAP_FRACTION,
+        currency_cap,
+        float(defender_nation.currency),
     )
 
     defender_nation.minerals -= minerals_stolen

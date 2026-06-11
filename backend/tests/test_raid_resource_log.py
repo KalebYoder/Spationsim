@@ -43,6 +43,7 @@ from app.models.fleet import Fleet
 from app.models.nation import Nation
 from app.models.player import Player
 from app.models.resource_log import ResourceLog
+from app.models.infrastructure import Infrastructure
 from app.models.territory import Territory
 from app.core.security import create_access_token, hash_password
 
@@ -179,6 +180,12 @@ def defender_territory(db: Session, defender_nation: Nation) -> Territory:
         owned_at=datetime.now(timezone.utc),
     )
     db.add(t)
+    db.flush()
+    # Active mine and refinery so the production-based raid cap is non-zero.
+    # richness=1.0 → mine=5 minerals/tick, refinery=5 fuel/tick, 60 currency/tick.
+    # Cap = RAID_PRODUCTION_TICKS_CAP(3) × production = 15 / 15 / 180 per raid.
+    db.add(Infrastructure(territory_id=t.id, type="mine", level=1, status="active"))
+    db.add(Infrastructure(territory_id=t.id, type="refinery", level=1, status="active"))
     db.flush()
     return t
 

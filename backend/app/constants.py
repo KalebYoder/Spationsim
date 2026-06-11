@@ -108,4 +108,7 @@ HOLDING_ATTRITION_RATE = 0.025
 TERRITORY_UPKEEP_K = 10
 
 DEFENDER_AUTO_ROUT_FRACTION = 0.50
-RAID_CAP_FRACTION = 0.10
+
+# Max resources stealable per raid = territory's N-tick production per resource type.
+# Tune during beta; higher = more rewarding raids, lower = less punishing for defender.
+RAID_PRODUCTION_TICKS_CAP = 3
