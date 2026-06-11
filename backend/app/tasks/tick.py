@@ -116,6 +116,110 @@ def run_tick():
                 status="processed",
             ))
 
+            # War-activation sweep: any fleet that was already stationed or holding
+            # at an enemy planet (staged during war_pending) enters pending_confirmation
+            # now so the defender gets the standard 4-hour response window from the
+            # moment hostilities begin.
+            for attacker_id, defender_id in [
+                (row.nation_a, row.nation_b),
+                (row.nation_b, row.nation_a),
+            ]:
+                defender_territory_ids = [
+                    t.id for t in db.query(Territory).filter(Territory.nation_id == defender_id).all()
+                ]
+                if not defender_territory_ids:
+                    continue
+
+                # stationed fleets: origin_territory is where they're parked
+                pre_staged_stationed = db.query(Fleet).filter(
+                    Fleet.nation_id == attacker_id,
+                    Fleet.status == "stationed",
+                    Fleet.origin_territory.in_(defender_territory_ids),
+                ).all()
+                for fleet in pre_staged_stationed:
+                    enemy_territory = db.get(Territory, fleet.origin_territory)
+                    fleet.status = "pending_confirmation"
+                    fleet.destination_territory = fleet.origin_territory
+                    fleet.confirmation_expires_at = tick_at + _CONFIRMATION_WINDOW
+                    db.add(Event(
+                        type="fleet_arrived_at_enemy_territory",
+                        payload={
+                            "fleet_id": fleet.id,
+                            "attacker_nation_id": attacker_id,
+                            "defender_nation_id": defender_id,
+                            "territory_id": fleet.origin_territory,
+                            "node_key": enemy_territory.node_key if enemy_territory else None,
+                            "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
+                            "reason": "war_activation_sweep",
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+                    db.add(Event(
+                        type="enemy_fleet_arrived",
+                        payload={
+                            "fleet_id": fleet.id,
+                            "attacker_nation_id": attacker_id,
+                            "defender_nation_id": defender_id,
+                            "territory_id": fleet.origin_territory,
+                            "node_key": enemy_territory.node_key if enemy_territory else None,
+                            "unit_count": fleet.unit_count,
+                            "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
+                            "reason": "war_activation_sweep",
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+
+                # holding fleets (from war_pending arrival quarantine):
+                # destination_territory is already the enemy planet
+                pre_staged_holding = db.query(Fleet).filter(
+                    Fleet.nation_id == attacker_id,
+                    Fleet.status == "holding",
+                    Fleet.destination_territory.in_(defender_territory_ids),
+                ).all()
+                for fleet in pre_staged_holding:
+                    enemy_territory = db.get(Territory, fleet.destination_territory)
+                    fleet.status = "pending_confirmation"
+                    fleet.confirmation_expires_at = tick_at + _CONFIRMATION_WINDOW
+                    db.add(Event(
+                        type="fleet_arrived_at_enemy_territory",
+                        payload={
+                            "fleet_id": fleet.id,
+                            "attacker_nation_id": attacker_id,
+                            "defender_nation_id": defender_id,
+                            "territory_id": fleet.destination_territory,
+                            "node_key": enemy_territory.node_key if enemy_territory else None,
+                            "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
+                            "reason": "war_activation_sweep",
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+                    db.add(Event(
+                        type="enemy_fleet_arrived",
+                        payload={
+                            "fleet_id": fleet.id,
+                            "attacker_nation_id": attacker_id,
+                            "defender_nation_id": defender_id,
+                            "territory_id": fleet.destination_territory,
+                            "node_key": enemy_territory.node_key if enemy_territory else None,
+                            "unit_count": fleet.unit_count,
+                            "confirmation_expires_at": fleet.confirmation_expires_at.isoformat(),
+                            "reason": "war_activation_sweep",
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+
         nations = db.query(Nation).all()
 
         # Pre-load dissent values for all territories (used for production modifier this tick)
@@ -400,9 +504,34 @@ def run_tick():
                     ))
                     continue
 
-                if diplo in ("war", "war_pending") and (not is_planet or diplo == "war_pending"):
-                    # War fleet enters void, OR pre-war fleet enters any territory:
-                    # land normally but alert the territory owner.
+                if diplo == "war_pending" and is_planet:
+                    # Fleet arrives at a planet during the grace period before war activates.
+                    # Land as holding (not stationed) so it cannot attack the instant war
+                    # begins. The war-activation sweep will move it to pending_confirmation
+                    # when the war row promotes to "war", giving the defender the standard
+                    # 4-hour response window from the moment hostilities begin.
+                    fleet.status = "holding"
+                    fleet.arrives_at = None
+                    fleet.departs_at = None
+                    db.add(Event(
+                        type="enemy_fleet_holding_at_border",
+                        payload={
+                            "fleet_id": fleet.id,
+                            "attacker_nation_id": fleet.nation_id,
+                            "defender_nation_id": dest_owner,
+                            "territory_id": dest_id,
+                            "node_key": dest.node_key,
+                            "unit_count": fleet.unit_count,
+                            "tick_at": tick_at.isoformat(),
+                        },
+                        scheduled_for=tick_at,
+                        processed_at=tick_at,
+                        status="processed",
+                    ))
+                    continue
+
+                if diplo in ("war", "war_pending") and not is_planet:
+                    # Fleet (at war or pre-war) enters void territory: alert and land normally.
                     db.add(Event(
                         type="enemy_fleet_entered_territory",
                         payload={
@@ -519,6 +648,8 @@ def run_tick():
         holding_on: set[int] = set()   # territory_ids with a holding enemy fleet
         engaged_on: set[int] = set()   # territory_ids with an engaged enemy fleet
         for _sf in db.query(Fleet).filter(Fleet.status.in_(["holding", "engaged", "occupying"])).all():
+            if _sf.destination_territory is None:
+                continue
             _sf_dest = db.get(Territory, _sf.destination_territory)
             if _sf_dest and _sf_dest.nation_id and _sf_dest.nation_id != _sf.nation_id:
                 if _sf.status in ("holding", "occupying"):
