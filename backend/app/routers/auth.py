@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..models.player import Player
@@ -7,6 +8,7 @@ from ..models.nation import Nation
 from ..schemas.auth import LoginRequest, PlayerResponse, RegisterRequest
 from ..core.security import create_access_token, decode_token, hash_password, verify_password
 from ..core.config import settings
+from ..tasks.email_tasks import send_email_task
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -21,6 +23,7 @@ def _player_response(player: Player, db: Session) -> PlayerResponse:
         username=player.username,
         email=player.email,
         has_nation=has_nation,
+        email_notifications_enabled=player.email_notifications_enabled,
     )
 
 
@@ -67,6 +70,12 @@ def register(body: RegisterRequest, response: Response, db: Session = Depends(ge
     db.commit()
     db.refresh(player)
 
+    send_email_task.delay(
+        player.email,
+        "Welcome to Spationsim",
+        f"Hi {player.username},\n\nYour account is ready. Good luck out there.\n\nSpationsim",
+    )
+
     _set_session_cookie(response, player.id)
     return _player_response(player, db)
 
@@ -94,4 +103,20 @@ def logout(response: Response):
 
 @router.get("/me", response_model=PlayerResponse)
 def me(player: Player = Depends(get_current_player), db: Session = Depends(get_db)):
+    return _player_response(player, db)
+
+
+class NotificationPrefsRequest(BaseModel):
+    email_notifications_enabled: bool
+
+
+@router.put("/notifications", response_model=PlayerResponse)
+def set_notification_prefs(
+    body: NotificationPrefsRequest,
+    player: Player = Depends(get_current_player),
+    db: Session = Depends(get_db),
+):
+    player.email_notifications_enabled = body.email_notifications_enabled
+    db.commit()
+    db.refresh(player)
     return _player_response(player, db)

@@ -17,6 +17,7 @@ class Player(Base):
     vacation_mode = Column(Boolean, default=False, nullable=False, index=True)
     vacation_since = Column(DateTime(timezone=True))
     aggression_lockout_until = Column(DateTime(timezone=True))
+    email_notifications_enabled = Column(Boolean, default=False, nullable=False)
 
     nation = relationship("Nation", back_populates="player", uselist=False)
 

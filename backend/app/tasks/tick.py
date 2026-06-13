@@ -18,6 +18,7 @@ from ..models.diplomacy import Diplomacy
 from ..services.tutorial import should_complete_step, get_tutorial_reward, next_step as tutorial_next_step, should_complete_step_on_action
 from ..models.probe import Probe
 from ..models.probe_data import ProbeData
+from .email_tasks import send_email_task
 from ..models.probe_visibility import ProbeVisibility
 from ..services.combat import resolve_combat_tick
 from ..services.logistics import compute_logistics_fuel_cost
@@ -641,6 +642,29 @@ def run_tick():
                     processed_at=tick_at,
                     status="processed",
                 ))
+                # Email the attacker: they missed their post-battle choice window.
+                attacker_nation = db.get(Nation, fleet.nation_id)
+                if attacker_nation:
+                    attacker_player = db.query(Player).filter(
+                        Player.id == attacker_nation.player_id
+                    ).first()
+                    if attacker_player and attacker_player.email_notifications_enabled:
+                        dest_territory = db.get(Territory, fleet.destination_territory)
+                        territory_name = (
+                            dest_territory.name or dest_territory.node_key
+                            if dest_territory else "unknown territory"
+                        )
+                        send_email_task.delay(
+                            attacker_player.email,
+                            "Spationsim: Fleet confirmation window expired",
+                            (
+                                f"Hi {attacker_player.username},\n\n"
+                                f"Your fleet at {territory_name} did not receive orders before "
+                                f"the confirmation window closed. It is now holding in place.\n\n"
+                                f"Log in to issue new orders: Raid, Rout, Raze, or Recall.\n\n"
+                                f"Spationsim"
+                            ),
+                        )
 
         # Snapshot fleet presence BEFORE combat so dissent reflects this tick's battle state.
         # engaged/holding fleets transition to occupying/post_battle_choice during combat,
