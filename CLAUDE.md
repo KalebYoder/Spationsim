@@ -42,7 +42,8 @@ Do not suggest alternatives to these without being asked.
 
 | Component | Choice |
 |---|---|
-| OS | CentOS Linux |
+| Host OS | Ubuntu 25.04 (Plucky Puffin) |
+| Container base images | `python:3.12-slim` (backend/worker), `node:22-alpine` (frontend) — official language images, not CentOS |
 | Containerization | Docker Compose |
 | Database | PostgreSQL |
 | Backend | Python / FastAPI |

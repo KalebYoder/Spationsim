@@ -20,6 +20,7 @@ class Territory(Base):
     last_renamed_at = Column(DateTime(timezone=True), nullable=True)
     last_sortie_at = Column(DateTime(timezone=True), nullable=True)
     sortie_queued = Column(Boolean, default=False, nullable=False, server_default="false")
+    conquest_lockout_until = Column(DateTime(timezone=True), nullable=True)
 
     nation = relationship("Nation", back_populates="territories", foreign_keys=[nation_id])
     infrastructure = relationship("Infrastructure", back_populates="territory")

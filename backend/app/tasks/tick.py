@@ -25,7 +25,7 @@ from ..services.logistics import compute_logistics_fuel_cost
 from ..services.territory_yield import compute_territory_yield, dissent_production_modifier
 from ..constants import (
     POPULATION_GROWTH_RATE, POPULATION_CAP_MULTIPLIER, PROBE_VISION_RADIUS,
-    UNIT_STATS, FACILITY_COSTS, DEMOLISH_REFUND_FRACTION, LOGISTICS_FUEL_K,
+    UNIT_STATS, FACILITY_COSTS, FACILITY_POPULATION_COST, DEMOLISH_REFUND_FRACTION, LOGISTICS_FUEL_K,
     TERRITORY_UPKEEP_K,
     DISSENT_WAR_AGGRESSOR, DISSENT_WAR_DEFENDER,
     DISSENT_FLEET_HOLDING, DISSENT_FLEET_ENGAGED, DISSENT_CONQUEST_RESET,
@@ -35,6 +35,7 @@ from ..constants import (
     HOME_TERRITORY_DEFENSE_MULTIPLIER,
     HOLDING_ATTRITION_RATE,
     DEFENDER_AUTO_ROUT_FRACTION,
+    WAR_MAX_DURATION_DAYS,
 )
 from ..services.dissent import compute_territory_dissent_delta
 from ..map_gen import generate_territory
@@ -221,6 +222,37 @@ def run_tick():
                         status="processed",
                     ))
 
+        # Auto white-peace: wars exceeding WAR_MAX_DURATION_DAYS resolve automatically.
+        # Covers inactive/deleted players who cannot confirm a bilateral peace.
+        # 48h redeclaration cooldown applies to prevent immediate re-escalation.
+        expired_wars = (
+            db.query(Diplomacy)
+            .filter(
+                Diplomacy.status == "war",
+                Diplomacy.war_started_at <= tick_at - timedelta(days=WAR_MAX_DURATION_DAYS),
+            )
+            .all()
+        )
+        for row in expired_wars:
+            row.status = "neutral"
+            row.war_started_at = None
+            row.declared_by = None
+            row.peace_until = tick_at + timedelta(hours=48)
+            row.updated_at = tick_at
+            db.add(Event(
+                type="war_auto_ended",
+                payload={
+                    "nation_a": row.nation_a,
+                    "nation_b": row.nation_b,
+                    "reason": "maximum_duration_reached",
+                    "max_days": WAR_MAX_DURATION_DAYS,
+                    "tick_at": tick_at.isoformat(),
+                },
+                scheduled_for=tick_at,
+                processed_at=tick_at,
+                status="processed",
+            ))
+
         nations = db.query(Nation).all()
 
         # Pre-load dissent values for all territories (used for production modifier this tick)
@@ -334,7 +366,21 @@ def run_tick():
             # k=1 is the beta starting point; adjust LOGISTICS_FUEL_K to tune.
             fuel_delta -= compute_logistics_fuel_cost(len(territory_ids), k=LOGISTICS_FUEL_K)
 
-            # Grow population in each territory (5% per tick, capped by richness)
+            # Grow population in each territory (1%/tick of free pop, capped by richness).
+            # Cap applies to total pop (free + employed); pre-load facility costs per territory.
+            facility_pop_by_territory: dict[int, int] = {}
+            for tid, ftype in (
+                db.query(Infrastructure.territory_id, Infrastructure.type)
+                .filter(
+                    Infrastructure.territory_id.in_(territory_ids),
+                    Infrastructure.status.in_(["active", "under_construction"]),
+                )
+                .all()
+            ):
+                facility_pop_by_territory[tid] = (
+                    facility_pop_by_territory.get(tid, 0) + FACILITY_POPULATION_COST.get(ftype, 0)
+                )
+
             pop_rows = (
                 db.query(TerritoryPopulation, Territory.mineral_richness, Territory.fuel_richness)
                 .join(Territory, TerritoryPopulation.territory_id == Territory.id)
@@ -344,8 +390,10 @@ def run_tick():
             population_delta = 0
             for pop, mineral_richness, fuel_richness in pop_rows:
                 cap = round(POPULATION_CAP_MULTIPLIER * (float(mineral_richness) + float(fuel_richness)))
-                if pop.current < cap:
-                    growth = min(max(1, round(pop.current * POPULATION_GROWTH_RATE)), cap - pop.current)
+                employed = facility_pop_by_territory.get(pop.territory_id, 0)
+                total_pop = pop.current + employed
+                if total_pop < cap:
+                    growth = min(max(1, round(pop.current * POPULATION_GROWTH_RATE)), cap - total_pop)
                     pop.current += growth
                     population_delta += growth
                     pop.last_updated = tick_at
@@ -432,6 +480,13 @@ def run_tick():
                 nation_obj.minerals += minerals_refund
                 nation_obj.fuel += fuel_refund
                 nation_obj.currency += currency_refund
+                pop_cost = FACILITY_POPULATION_COST.get(infra.type, 0)
+                if pop_cost > 0:
+                    pop_row = db.query(TerritoryPopulation).filter(
+                        TerritoryPopulation.territory_id == infra.territory_id
+                    ).first()
+                    if pop_row:
+                        pop_row.current += pop_cost
                 db.add(Event(
                     type="facility_demolition_complete",
                     payload={
@@ -756,7 +811,7 @@ def run_tick():
                 # Defender auto-rout: bonus damage when defender survived and attacker took losses.
                 # Fires even if attacker was already wiped in normal combat (fleet.unit_count may be 0).
                 # bonus_damage records the raw formula result; actual damage applied is capped at remaining fleet.
-                if attacker_losses > 0 and defender_fleet.unit_count > 0:
+                if attacker_losses > 0 and fleet.unit_count > 0 and defender_fleet.unit_count > 0:
                     auto_rout_bonus = max(1, round(attacker_losses * DEFENDER_AUTO_ROUT_FRACTION))
                     actual_auto_rout = min(auto_rout_bonus, fleet.unit_count)
                     fleet.unit_count -= actual_auto_rout
@@ -795,7 +850,7 @@ def run_tick():
                     # standing_order resets to 'hold' so inaction on PBC expiry is safe.
                     fleet.status = "post_battle_choice"
                     fleet.standing_order = "hold"
-                    fleet.confirmation_expires_at = tick_at + timedelta(hours=2)
+                    fleet.confirmation_expires_at = tick_at + _CONFIRMATION_WINDOW
 
             else:
                 # Enemy territory, no defending fleet — enter occupation window

@@ -1,0 +1,15 @@
+resource "cloudflare_record" "root" {
+  zone_id = var.cloudflare_zone_id
+  name    = "@"
+  type    = "A"
+  value   = var.server_ip
+  proxied = true
+}
+
+resource "cloudflare_record" "www" {
+  zone_id = var.cloudflare_zone_id
+  name    = "www"
+  type    = "CNAME"
+  value   = var.domain_name
+  proxied = true
+}

@@ -78,7 +78,7 @@ DISSENT_WAR_AGGRESSOR    = 3   # all aggressor's territories while at war
 DISSENT_WAR_DEFENDER     = 2   # all defender's territories while at war
 DISSENT_FLEET_HOLDING    = 6   # territory with enemy fleet holding
 DISSENT_FLEET_ENGAGED    = 10  # territory with enemy fleet engaged
-DISSENT_CONQUEST_RESET   = 60  # instant value on conquest
+DISSENT_CONQUEST_RESET   = 80  # instant value on conquest
 
 # Dissent decay (per tick, negative = decreasing dissent)
 DISSENT_DECAY_PEACE      = -3  # at peace, no enemy fleet
@@ -109,6 +109,12 @@ TERRITORY_UPKEEP_K = 10
 
 DEFENDER_AUTO_ROUT_FRACTION = 0.50
 
-# Max resources stealable per raid = territory's N-tick production per resource type.
-# Tune during beta; higher = more rewarding raids, lower = less punishing for defender.
-RAID_PRODUCTION_TICKS_CAP = 3
+# Raid loot = min(fleet_FP * RAID_K, defender_stockpile * RAID_MAX_STOCKPILE_FRACTION).
+# RAID_K=1 means 500 FP hits the 5% cap on a 10,000-unit stockpile.
+# Scales naturally with new unit types (cruisers etc.) via their FP stat.
+RAID_K                    = 1
+RAID_MAX_STOCKPILE_FRACTION = 0.05
+
+# Wars that reach this age auto-resolve to white peace. 48h redeclaration cooldown applies.
+# Prevents indefinite wars against inactive or deleted players.
+WAR_MAX_DURATION_DAYS = 14

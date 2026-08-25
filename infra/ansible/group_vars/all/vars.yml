@@ -1,0 +1,4 @@
+# Non-secret variables. Secrets live in vault.yml (encrypted, not committed).
+app_dir: /home/kaleb/spationsim
+app_user: kaleb
+repo_url: https://github.com/KalebYoder/Spationsim.git

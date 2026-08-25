@@ -71,3 +71,53 @@ def compute_reachable_ids(
                 break
 
     return reachable
+
+
+def compute_path(
+    source_key: str, dest_key: str, nation_id: int, territories: list[dict]
+) -> list[dict] | None:
+    """
+    BFS shortest path from source to dest using the same passability rules as
+    compute_reachable_ids. Returns territory dicts from source to dest inclusive,
+    or None if the destination is unreachable.
+    """
+    by_key: dict[str, dict] = {t["node_key"]: t for t in territories}
+
+    if source_key not in by_key or dest_key not in by_key:
+        return None
+    if source_key == dest_key:
+        return [by_key[source_key]]
+
+    def _neighbors(key: str):
+        q, r = map(int, key.split(","))
+        for dq, dr in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)):
+            nkey = f"{q + dq},{r + dr}"
+            if nkey in by_key:
+                yield nkey
+
+    def _passable(t: dict) -> bool:
+        return t["territory_type"] != "void" and (
+            t["nation_id"] is None or t["nation_id"] == nation_id
+        )
+
+    parent: dict[str, str | None] = {source_key: None}
+    queue: deque[str] = deque([source_key])
+
+    while queue:
+        current_key = queue.popleft()
+        for nkey in _neighbors(current_key):
+            if nkey in parent:
+                continue
+            neighbor = by_key[nkey]
+            if _passable(neighbor) or nkey == dest_key:
+                parent[nkey] = current_key
+                if nkey == dest_key:
+                    path: list[dict] = []
+                    k: str | None = dest_key
+                    while k is not None:
+                        path.append(by_key[k])
+                        k = parent[k]
+                    return list(reversed(path))
+                queue.append(nkey)
+
+    return None

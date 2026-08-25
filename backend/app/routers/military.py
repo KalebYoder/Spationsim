@@ -17,7 +17,7 @@ from ..models.territory_population import TerritoryPopulation
 from ..models.territory_dissent import TerritoryDissent
 from ..models.resource_log import ResourceLog
 from ..models.player import Player
-from ..services.pathfinding import compute_reachable_ids
+from ..services.pathfinding import compute_reachable_ids, compute_path
 from ..services.territory_yield import compute_territory_yield
 from ..schemas.nation import (
     ClaimTerritoryResponse,
@@ -33,8 +33,9 @@ from ..schemas.nation import (
 )
 from ..routers.auth import get_current_player
 from ..routers.diplomacy import is_at_war, get_diplomacy_status
+from ..models.diplomacy import Diplomacy
 from ..routers.tutorial import _apply_tutorial_action
-from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST, RAID_PRODUCTION_TICKS_CAP
+from ..constants import COLONY_SHIP_STATS, UNIT_STATS, FACILITY_POPULATION_COST, RAID_K, RAID_MAX_STOCKPILE_FRACTION, DISSENT_CONQUEST_RESET
 
 router = APIRouter(prefix="/api/military", tags=["military"])
 
@@ -101,11 +102,12 @@ def _fleet_response(fleet: Fleet, db: Session) -> FleetResponse:
 
 
 def _nation_pop_stats(nation_id: int, db: Session) -> tuple[int, int]:
+    """Returns (total_pop, assigned_pop). current column now stores free (unassigned) pop."""
     territory_ids = [
         t_id for (t_id,) in
         db.query(Territory.id).filter(Territory.nation_id == nation_id).all()
     ]
-    total = int(
+    free = int(
         db.query(sqlfunc.sum(TerritoryPopulation.current))
         .filter(TerritoryPopulation.territory_id.in_(territory_ids))
         .scalar() or 0
@@ -120,7 +122,7 @@ def _nation_pop_stats(nation_id: int, db: Session) -> tuple[int, int]:
         .all()
     )
     assigned = sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in facilities)
-    return total, assigned
+    return free + assigned, assigned
 
 
 @router.get("/units", response_model=list[UnitStatsResponse])
@@ -214,20 +216,13 @@ def manufacture_starfighter(
 
     pop_row = db.query(TerritoryPopulation).filter(
         TerritoryPopulation.territory_id == territory.id
-    ).first()
-    territory_pop = pop_row.current if pop_row else 0
-
-    territory_facilities = db.query(Infrastructure).filter(
-        Infrastructure.territory_id == territory.id,
-        Infrastructure.status.in_(["active", "under_construction"]),
-    ).all()
-    territory_assigned = sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in territory_facilities)
-    territory_unassigned = territory_pop - territory_assigned
+    ).with_for_update().first()
+    territory_unassigned = pop_row.current if pop_row else 0
 
     if territory_unassigned < body.quantity:
         raise HTTPException(
             status_code=409,
-            detail=f"Insufficient unassigned population at this territory (need {body.quantity}, have {max(0, territory_unassigned)})",
+            detail=f"Insufficient unassigned population at this territory (need {body.quantity}, have {territory_unassigned})",
         )
 
     # Deduct from the shipyard territory's population only. Fighter deaths do
@@ -345,6 +340,34 @@ def send_fleet(
         standing_order="hold",
     )
     db.add(transit)
+
+    # Notify owners of territories this fleet will pass through en route.
+    # One event per distinct owner; deduplicated so a player with multiple
+    # intermediate territories only gets one notification per dispatch.
+    path = compute_path(origin.node_key, dest.node_key, nation.id, territory_dicts)
+    if path and len(path) > 2:
+        db.flush()  # populate transit.id before referencing it in event payloads
+        notified: set[int] = set()
+        for step in path[1:-1]:
+            owner_id = step.get("nation_id")
+            if owner_id and owner_id != nation.id and owner_id not in notified:
+                notified.add(owner_id)
+                db.add(Event(
+                    type="foreign_fleet_in_transit",
+                    payload={
+                        "fleet_id": transit.id,
+                        "transiting_nation_id": nation.id,
+                        "owner_nation_id": owner_id,
+                        "territory_id": step["id"],
+                        "territory_node_key": step["node_key"],
+                        "destination_territory_id": dest.id,
+                        "dispatched_at": now.isoformat(),
+                    },
+                    scheduled_for=now,
+                    processed_at=now,
+                    status="processed",
+                ))
+
     _apply_tutorial_action(nation.id, "dispatch_fleet", db)
     db.commit()
     db.refresh(transit)
@@ -508,10 +531,13 @@ def occupy_territory(
 
     now = datetime.now(timezone.utc)
     former_owner_id = dest.nation_id
+    _CONQUEST_LOCKOUT_TICKS = 12
+    _TICK_HOURS = 2
 
     dest.nation_id = nation.id
     dest.is_owned = True
     dest.owned_at = now
+    dest.conquest_lockout_until = now + timedelta(hours=_CONQUEST_LOCKOUT_TICKS * _TICK_HOURS)
 
     # Remove stale probe data — conquered territory is now visible on the map
     for pd in db.query(ProbeData).filter(ProbeData.territory_id == dest.id).all():
@@ -519,12 +545,40 @@ def occupy_territory(
     db.query(ProbeData).filter(ProbeData.territory_id == dest.id).delete()
     db.query(ProbeVisibility).filter(ProbeVisibility.territory_id == dest.id).delete()
 
-    # Conquered population starts hostile — set dissent to 60 instantly
+    # Destroy any propaganda office — its staff are loyal to the former government
+    # and permanently lost (pop is NOT restored to the territory pool).
+    po_list = (
+        db.query(Infrastructure)
+        .filter(
+            Infrastructure.territory_id == dest.id,
+            Infrastructure.type == "propaganda_office",
+        )
+        .all()
+    )
+    po_pop_lost = sum(FACILITY_POPULATION_COST.get("propaganda_office", 0) for _ in po_list)
+    for po in po_list:
+        db.delete(po)
+    if po_pop_lost > 0:
+        db.add(Event(
+            type="propaganda_office_destroyed",
+            payload={
+                "territory_id": dest.id,
+                "node_key": dest.node_key,
+                "former_owner_id": former_owner_id,
+                "population_lost": po_pop_lost,
+                "conquered_at": now.isoformat(),
+            },
+            scheduled_for=now,
+            processed_at=now,
+            status="processed",
+        ))
+
+    # Conquered population starts hostile — set dissent instantly
     dissent_row = db.query(TerritoryDissent).filter(TerritoryDissent.territory_id == dest.id).first()
     if dissent_row:
-        dissent_row.dissent = 60
+        dissent_row.dissent = DISSENT_CONQUEST_RESET
     else:
-        db.add(TerritoryDissent(territory_id=dest.id, dissent=60))
+        db.add(TerritoryDissent(territory_id=dest.id, dissent=DISSENT_CONQUEST_RESET))
 
     fleet.status = "stationed"
     fleet.origin_territory = dest.id
@@ -608,15 +662,16 @@ def rout_fleet(
     now = datetime.now(timezone.utc)
     from sqlalchemy import cast, Integer as SAInt
 
-    last_combat = (
-        db.query(Event)
-        .filter(
-            Event.type == "combat_round",
-            cast(Event.payload["fleet_id"].astext, SAInt) == fleet.id,
-        )
-        .order_by(Event.id.desc())
-        .first()
+    a, b = min(nation.id, dest.nation_id), max(nation.id, dest.nation_id)
+    diplo = db.query(Diplomacy).filter(Diplomacy.nation_a == a, Diplomacy.nation_b == b).first()
+
+    combat_q = db.query(Event).filter(
+        Event.type == "combat_round",
+        cast(Event.payload["fleet_id"].astext, SAInt) == fleet.id,
     )
+    if diplo and diplo.war_starts_at:
+        combat_q = combat_q.filter(Event.scheduled_for >= diplo.war_starts_at)
+    last_combat = combat_q.order_by(Event.id.desc()).first()
 
     bonus_damage = 0
     if last_combat and last_combat.payload:
@@ -642,6 +697,8 @@ def rout_fleet(
 
     fleet.status = "engaged"
     fleet.confirmation_expires_at = None
+    if getattr(dest, "sortie_queued", False):
+        dest.sortie_queued = False
 
     db.add(Event(
         type="rout_applied",
@@ -690,43 +747,11 @@ def raid_fleet(
 
     now = datetime.now(timezone.utc)
     firepower = fleet.unit_count * UNIT_STATS["starfighter"]["firepower"]
+    loot_potential = firepower * RAID_K
 
-    mine_count = db.query(Infrastructure).filter(
-        Infrastructure.territory_id == dest.id,
-        Infrastructure.type == "mine",
-        Infrastructure.status == "active",
-    ).count()
-    refinery_count = db.query(Infrastructure).filter(
-        Infrastructure.territory_id == dest.id,
-        Infrastructure.type == "refinery",
-        Infrastructure.status == "active",
-    ).count()
-    territory_yield = compute_territory_yield(
-        dest.territory_type,
-        float(dest.mineral_richness),
-        float(dest.fuel_richness),
-        mine_count,
-        refinery_count,
-    )
-    minerals_cap = territory_yield["minerals_per_tick"] * RAID_PRODUCTION_TICKS_CAP
-    fuel_cap = territory_yield["fuel_per_tick"] * RAID_PRODUCTION_TICKS_CAP
-    currency_cap = territory_yield["currency_income_per_tick"] * RAID_PRODUCTION_TICKS_CAP
-
-    minerals_stolen = min(
-        random.uniform(0.5 * firepower, 1.5 * firepower),
-        minerals_cap,
-        float(defender_nation.minerals),
-    )
-    fuel_stolen = min(
-        random.uniform(0.5 * firepower, 1.5 * firepower),
-        fuel_cap,
-        float(defender_nation.fuel),
-    )
-    currency_stolen = min(
-        random.uniform(0.5 * firepower, 1.5 * firepower),
-        currency_cap,
-        float(defender_nation.currency),
-    )
+    minerals_stolen = min(loot_potential, float(defender_nation.minerals) * RAID_MAX_STOCKPILE_FRACTION)
+    fuel_stolen     = min(loot_potential, float(defender_nation.fuel)     * RAID_MAX_STOCKPILE_FRACTION)
+    currency_stolen = min(loot_potential, float(defender_nation.currency) * RAID_MAX_STOCKPILE_FRACTION)
 
     defender_nation.minerals -= minerals_stolen
     defender_nation.fuel -= fuel_stolen
@@ -737,6 +762,8 @@ def raid_fleet(
 
     fleet.status = "engaged"
     fleet.confirmation_expires_at = None
+    if getattr(dest, "sortie_queued", False):
+        dest.sortie_queued = False
 
     db.add(Event(
         type="raid_applied",
@@ -1121,12 +1148,8 @@ def load_colony_ship(
 
     pop_row = db.query(TerritoryPopulation).filter(
         TerritoryPopulation.territory_id == territory.id
-    ).first()
-    total_pop = pop_row.current if pop_row else 0
-    assigned_pop = db.query(sqlfunc.coalesce(sqlfunc.sum(Infrastructure.population_assigned), 0)).filter(
-        Infrastructure.territory_id == territory.id
-    ).scalar()
-    available_pop = total_pop - assigned_pop
+    ).with_for_update().first()
+    available_pop = pop_row.current if pop_row else 0
     if available_pop <= 0:
         raise HTTPException(status_code=409, detail="Territory has no unassigned population to load")
 

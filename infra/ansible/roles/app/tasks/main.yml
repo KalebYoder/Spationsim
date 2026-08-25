@@ -1,0 +1,22 @@
+- name: Clone or update repository
+  git:
+    repo: https://github.com/KalebYoder/Spationsim.git
+    dest: /home/kaleb/spationsim
+    version: master
+    force: no
+  become_user: kaleb
+
+- name: Write .env file
+  template:
+    src: env.j2
+    dest: /home/kaleb/spationsim/.env
+    owner: kaleb
+    group: kaleb
+    mode: '0600'
+
+- name: Start services
+  community.docker.docker_compose_v2:
+    project_src: /home/kaleb/spationsim
+    state: present
+    pull: missing
+  become_user: kaleb

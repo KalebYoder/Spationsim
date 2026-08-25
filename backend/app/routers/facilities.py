@@ -5,6 +5,7 @@ from ..db.database import get_db
 from ..models.infrastructure import Infrastructure
 from ..models.nation import Nation
 from ..models.territory import Territory
+from ..models.territory_population import TerritoryPopulation
 from ..models.player import Player
 from ..schemas.nation import InfrastructureBuildRequest, InfrastructureResponse
 from ..routers.auth import get_current_player
@@ -40,18 +41,6 @@ def _to_response(infra: Infrastructure, territory: Territory) -> InfrastructureR
     )
 
 
-def _territory_assigned_pop(territory_id: int, db: Session) -> int:
-    """Sum population cost of all active + under_construction facilities on a single territory."""
-    rows = (
-        db.query(Infrastructure)
-        .filter(
-            Infrastructure.territory_id == territory_id,
-            Infrastructure.status.in_(["active", "under_construction"]),
-        )
-        .all()
-    )
-    return sum(FACILITY_POPULATION_COST.get(f.type, 0) for f in rows)
-
 
 @router.get("", response_model=list[InfrastructureResponse])
 def list_facilities(
@@ -86,6 +75,14 @@ def build_facility(
     if territory.territory_type == "void":
         raise HTTPException(status_code=409, detail="Cannot build facilities in void space")
 
+    now = datetime.now(timezone.utc)
+    if territory.conquest_lockout_until and territory.conquest_lockout_until > now:
+        hours_remaining = round((territory.conquest_lockout_until - now).total_seconds() / 3600, 1)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Newly conquered territory is in lockdown — construction unlocks in {hours_remaining}h",
+        )
+
     if body.type == "propaganda_office":
         existing = (
             db.query(Infrastructure)
@@ -109,17 +106,19 @@ def build_facility(
         raise HTTPException(status_code=409, detail="Insufficient resources")
 
     pop_cost = FACILITY_POPULATION_COST.get(body.type, 0)
+    pop_row = None
     if pop_cost > 0:
-        territory_pop = int(
-            db.query(TerritoryPopulation.current)
+        pop_row = (
+            db.query(TerritoryPopulation)
             .filter(TerritoryPopulation.territory_id == territory.id)
-            .scalar() or 0
+            .with_for_update()
+            .first()
         )
-        unassigned = territory_pop - _territory_assigned_pop(territory.id, db)
-        if unassigned < pop_cost:
+        available = pop_row.current if pop_row else 0
+        if available < pop_cost:
             raise HTTPException(
                 status_code=409,
-                detail=f"Insufficient unassigned population on this territory (need {pop_cost}, have {max(0, unassigned)})",
+                detail=f"Insufficient unassigned population on this territory (need {pop_cost}, have {available})",
             )
 
     nation.minerals -= cost["minerals"]
@@ -136,8 +135,10 @@ def build_facility(
         completes_at=completes_at,
     )
     db.add(infra)
+    if pop_row and pop_cost > 0:
+        pop_row.current -= pop_cost
 
-    # Award tutorial reward immediately for steps 1 and 2
+    # Award tutorial reward immediately for steps 1, 2, and 4
     tutorial = db.query(TutorialState).filter(
         TutorialState.nation_id == nation.id,
         TutorialState.dismissed == False,
@@ -151,6 +152,12 @@ def build_facility(
         completed_step = tutorial.current_step
         setattr(tutorial, f"step{completed_step}_completed_at", datetime.now(timezone.utc))
         tutorial.current_step = tutorial_next_step(tutorial.current_step)
+        # Steps 1 and 2 (mine, refinery): activate immediately so the tutorial reward
+        # cannot be exploited by cancelling the under_construction facility.
+        if completed_step in {1, 2}:
+            infra.status = "active"
+            infra.built_at = datetime.now(timezone.utc)
+            infra.completes_at = None
 
     db.commit()
     db.refresh(infra)
@@ -215,6 +222,14 @@ def cancel_construction(
     nation.minerals += cost["minerals"]
     nation.fuel += cost["fuel"]
     nation.currency += cost.get("currency", 0)
+
+    pop_cost = FACILITY_POPULATION_COST.get(infra.type, 0)
+    if pop_cost > 0:
+        pop_row = db.query(TerritoryPopulation).filter(
+            TerritoryPopulation.territory_id == infra.territory_id
+        ).first()
+        if pop_row:
+            pop_row.current += pop_cost
 
     db.delete(infra)
     db.commit()

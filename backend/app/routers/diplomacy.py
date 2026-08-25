@@ -34,7 +34,7 @@ def _get_or_create_diplomacy(db: Session, nation_a_id: int, nation_b_id: int) ->
     row = db.query(Diplomacy).filter(
         Diplomacy.nation_a == a,
         Diplomacy.nation_b == b,
-    ).first()
+    ).with_for_update().first()
     if not row:
         row = Diplomacy(nation_a=a, nation_b=b, status="neutral")
         db.add(row)

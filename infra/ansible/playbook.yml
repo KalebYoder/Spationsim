@@ -1,0 +1,5 @@
+- name: Configure spationsim server
+  hosts: server
+  roles:
+    - common
+    - app

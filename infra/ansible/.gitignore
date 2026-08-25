@@ -1,0 +1,5 @@
+# Ansible vault password file
+.vault_pass
+
+# Unencrypted secrets — always use vault.yml instead
+group_vars/all/vault.yml
